@@ -91,5 +91,12 @@ class Document(Base):
     size_bytes = Column(BigInteger, default=0)
     uploaded_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    # AI extraction fields — populated by extract_document_data() in agent.py
+    extracted_amount = Column(Float, nullable=True)
+    extracted_date = Column(String, nullable=True)     # ISO date string
+    extracted_vendor = Column(String, nullable=True)
+    extracted_category = Column(String, nullable=True)
+    extraction_confidence = Column(Float, nullable=True)
+
     transaction = relationship("Transaction", back_populates="documents")
     property = relationship("Property", back_populates="documents")

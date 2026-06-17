@@ -4,6 +4,8 @@ import Properties from './components/Properties';
 import Tenants from './components/Tenants';
 import Transactions from './components/Transactions';
 import Financials from './components/Financials';
+import Tools from './components/Tools';
+import Calendar from './components/Calendar';
 import Login from './components/Login';
 import Home from './components/Home';
 import { clearSession, getEmail, getToken } from './auth';
@@ -11,7 +13,7 @@ import { getStoredTheme, applyTheme } from './theme';
 import type { Theme } from './theme';
 import elaraLogo from './assets/elara.jpg';
 
-type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials';
+type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -67,16 +69,22 @@ function App() {
     { view: 'tenants', label: 'Tenants' },
     { view: 'transactions', label: 'Transactions' },
     { view: 'financials', label: 'Financials' },
+    { view: 'tools', label: 'Tools' },
+    { view: 'calendar', label: 'Calendar' },
   ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', padding: '1rem' }}>
       <div className="app-nav-wrapper">
         <nav className="app-nav">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button
+            onClick={() => setCurrentView('dashboard')}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            aria-label="Go to dashboard"
+          >
             <img src={elaraLogo} alt="" style={{ width: '28px', height: '28px', borderRadius: '6px', objectFit: 'cover' }} />
             <h2 className="app-nav-brand text-gradient">Elara</h2>
-          </div>
+          </button>
           {navItems.map(({ view, label }) => (
             <button
               key={view}
@@ -130,6 +138,8 @@ function App() {
         {currentView === 'tenants' && <Tenants />}
         {currentView === 'transactions' && <Transactions />}
         {currentView === 'financials' && <Financials />}
+        {currentView === 'tools' && <Tools />}
+        {currentView === 'calendar' && <Calendar />}
       </main>
     </div>
   );

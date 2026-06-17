@@ -12,12 +12,20 @@ import datetime
 import httpx
 import time
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 import uuid
 import csv
 import io
 
-from agent import generate_insights, draft_renewal_letter
+from agent import (
+    generate_insights,
+    draft_renewal_letter,
+    extract_document_data,
+    analyze_maintenance_health,
+    get_portfolio_advice,
+)
 from auth import (
     create_token,
     get_current_user,
@@ -27,9 +35,21 @@ from auth import (
 
 app = FastAPI(title="Elara API")
 
+@app.middleware("http")
+async def debug_logging(request, call_next):
+    print(f"DEBUG: {request.method} {request.url}")
+    # print(f"DEBUG: Headers: {dict(request.headers)}")
+    try:
+        response = await call_next(request)
+        print(f"DEBUG: Response {response.status_code}")
+        return response
+    except Exception as e:
+        print(f"DEBUG: Exception: {e}")
+        raise
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -236,31 +256,30 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
             return cached_data
 
     rapidapi_key = os.environ.get("RAPIDAPI_KEY")
+    rapidapi_host = os.environ.get("RAPIDAPI_HOST", "zillow-com1.p.rapidapi.com")
+    base_url = os.environ.get("ZILLOW_API_BASE_URL") or "https://zillow-com1.p.rapidapi.com"
+
     if not rapidapi_key:
         if not any("api key" in a.get("description", "").lower() for a in alerts):
             alerts.append({
                 "id": len(alerts) + 900,
                 "type": "warning",
                 "title": "Missing API Key",
-                "description": "Missing api key configuration. Serving fallback data.",
+                "description": "Missing RAPIDAPI_KEY configuration. Serving fallback data.",
                 "time": "Just now",
             })
         fallback_res = MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
         return fallback_res
 
-    base_url = os.environ.get("ZILLOW_API_BASE_URL") or "https://zillow-com1.p.rapidapi.com"
     url = f"{base_url}/market-data"
     headers = {
         "X-RapidAPI-Key": rapidapi_key,
-        "X-RapidAPI-Host": os.environ.get("RAPIDAPI_HOST", "zillow-com1.p.rapidapi.com"),
+        "X-RapidAPI-Host": rapidapi_host,
     }
 
-    async with httpx.AsyncClient(timeout=3.0) as client:
+    async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            response = await asyncio.wait_for(
-                client.get(url, params={"city": city}, headers=headers),
-                timeout=3.0,
-            )
+            response = await client.get(url, params={"city": city}, headers=headers)
             if response.status_code == 200:
                 raw_data = response.json()
                 sanitized = sanitize_market_data(raw_data)
@@ -275,15 +294,13 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
                         "description": "Zillow API rate limit hit. Serving cached/fallback data.",
                         "time": "Just now",
                     })
-                fallback_res = MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
-                return fallback_res
+                return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
             else:
-                fallback_res = MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
-                return fallback_res
+                print(f"Zillow API error: {response.status_code} - {response.text}")
+                return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
         except Exception as e:
-            print("Zillow fetch error:", e, flush=True)
-            fallback_res = MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
-            return fallback_res
+            print(f"Zillow fetch exception: {e}")
+            return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +494,18 @@ async def get_properties(
 ):
     properties = db.query(Property).all()
     return [_serialize_property(p, db) for p in properties]
+
+
+@app.get("/api/properties/{property_id}")
+async def get_property(
+    property_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return _serialize_property(prop, db)
 
 
 @app.post("/api/properties", status_code=201)
@@ -695,6 +724,18 @@ async def get_tenants(
     return [_serialize_tenant(t, db) for t in tenants]
 
 
+@app.get("/api/tenants/{tenant_id}")
+async def get_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return _serialize_tenant(t, db)
+
+
 class TenantCreate(BaseModel):
     name: str
     email: Optional[str] = None
@@ -846,6 +887,26 @@ async def renewal_letter(
     return result
 
 
+@app.get("/api/agents/portfolio-advice")
+async def portfolio_advice(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Get high-level portfolio strategic advice from Claude."""
+    result = get_portfolio_advice(db)
+
+    if "error" in result:
+        error_msg = result["error"]
+        if "ANTHROPIC_API_KEY" in error_msg or "not installed" in error_msg:
+            raise HTTPException(
+                status_code=503,
+                detail=error_msg
+            )
+        raise HTTPException(status_code=500, detail=error_msg)
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Transactions CRUD
 # ---------------------------------------------------------------------------
@@ -858,6 +919,16 @@ class TransactionCreate(BaseModel):
     type: str
     description: Optional[str] = None
     status: Optional[str] = "Paid"
+
+
+class TransactionUpdate(BaseModel):
+    property_id: Optional[int] = None
+    date: Optional[datetime.date] = None
+    amount: Optional[float] = None
+    category: Optional[str] = None
+    type: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
 
 
 def _normalize_type(value: str) -> str:
@@ -895,6 +966,18 @@ async def get_transactions(
     return [_serialize_transaction(t, db) for t in transactions]
 
 
+@app.get("/api/transactions/{transaction_id}")
+async def get_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    t = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return _serialize_transaction(t, db)
+
+
 @app.post("/api/transactions")
 async def create_transaction(
     tx: TransactionCreate,
@@ -916,6 +999,51 @@ async def create_transaction(
     return _serialize_transaction(new_tx, db)
 
 
+@app.put("/api/transactions/{transaction_id}")
+async def update_transaction(
+    transaction_id: int,
+    body: TransactionUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if body.property_id is not None:
+        prop = db.query(Property).filter(Property.id == body.property_id).first()
+        if not prop:
+            raise HTTPException(status_code=404, detail="Property not found")
+        tx.property_id = body.property_id
+    if body.date is not None:
+        tx.transaction_date = body.date
+    if body.amount is not None:
+        tx.amount = body.amount
+    if body.category is not None:
+        tx.category = body.category
+    if body.type is not None:
+        tx.type = _normalize_type(body.type)
+    if body.description is not None:
+        tx.description = body.description
+    if body.status is not None:
+        tx.status = body.status
+    db.commit()
+    db.refresh(tx)
+    return _serialize_transaction(tx, db)
+
+
+@app.delete("/api/transactions/{transaction_id}", status_code=204)
+async def delete_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    db.delete(tx)
+    db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Documents (F3)
 # ---------------------------------------------------------------------------
@@ -929,6 +1057,12 @@ def _serialize_document(d: Document) -> dict:
         "mimeType": d.mime_type,
         "sizeBytes": d.size_bytes,
         "uploadedAt": d.uploaded_at.isoformat() if d.uploaded_at else None,
+        # AI extraction fields (null when not yet extracted)
+        "extractedAmount": d.extracted_amount,
+        "extractedDate": d.extracted_date,
+        "extractedVendor": d.extracted_vendor,
+        "extractedCategory": d.extracted_category,
+        "extractionConfidence": d.extraction_confidence,
     }
 
 
@@ -979,7 +1113,64 @@ async def upload_transaction_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
+
+    # Attempt AI extraction — non-fatal if it fails
+    try:
+        extraction = extract_document_data(safe_filename)
+        doc.extracted_amount = extraction.get("amount")
+        doc.extracted_date = extraction.get("date")
+        doc.extracted_vendor = extraction.get("vendor")
+        doc.extracted_category = extraction.get("category")
+        doc.extraction_confidence = extraction.get("confidence")
+        db.commit()
+        db.refresh(doc)
+    except Exception:
+        pass  # Extraction failure must never block a successful upload
+
     return _serialize_document(doc)
+
+
+@app.post("/api/transactions/{transaction_id}/documents/{document_id}/sync")
+async def sync_document_to_transaction(
+    transaction_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Apply extracted document data back to the parent Transaction.
+
+    Only updates fields where extraction_confidence > 0.7 and the extracted
+    value is present. Returns the updated Transaction.
+    """
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.transaction_id == transaction_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this transaction")
+
+    confidence = doc.extraction_confidence
+    if confidence is None or confidence <= 0.7:
+        return _serialize_transaction(tx, db)  # nothing to apply
+
+    if doc.extracted_amount is not None:
+        tx.amount = doc.extracted_amount
+    if doc.extracted_date is not None:
+        try:
+            tx.transaction_date = datetime.date.fromisoformat(doc.extracted_date)
+        except ValueError:
+            pass  # Bad date string — skip
+    if doc.extracted_category is not None:
+        tx.category = doc.extracted_category
+
+    db.commit()
+    db.refresh(tx)
+    return _serialize_transaction(tx, db)
 
 
 @app.get("/api/transactions/{transaction_id}/documents")
@@ -992,6 +1183,68 @@ async def list_transaction_documents(
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
     docs = db.query(Document).filter(Document.transaction_id == transaction_id).all()
+    return [_serialize_document(d) for d in docs]
+
+
+@app.post("/api/properties/{property_id}/documents", status_code=201)
+async def upload_property_document(
+    property_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    # Extension check
+    _, ext = os.path.splitext(file.filename or "")
+    if ext.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' not allowed. Accepted: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    # Read and size check
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
+
+    # Determine MIME type
+    mime_type = file.content_type or "application/octet-stream"
+    # Normalise heic
+    if ext.lower() in (".heic", ".heif"):
+        mime_type = "image/heic"
+
+    # Save with UUID prefix
+    safe_filename = f"{uuid.uuid4().hex}{ext.lower()}"
+    dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    doc = Document(
+        property_id=property_id,
+        filename=file.filename or safe_filename,
+        storage_path=safe_filename,
+        mime_type=mime_type,
+        size_bytes=len(contents),
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return _serialize_document(doc)
+
+
+@app.get("/api/properties/{property_id}/documents")
+async def list_property_documents(
+    property_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    docs = db.query(Document).filter(Document.property_id == property_id).all()
     return [_serialize_document(d) for d in docs]
 
 
@@ -1370,3 +1623,319 @@ async def get_schedule_e(
         )
 
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — Lender-view metrics: DSCR & LTV
+# ---------------------------------------------------------------------------
+
+def _dscr_status(dscr: Optional[float]) -> str:
+    if dscr is None:
+        return "unknown"
+    if dscr >= 1.25:
+        return "good"
+    if dscr >= 1.0:
+        return "warning"
+    return "danger"
+
+
+def _ltv_status(ltv: Optional[float]) -> str:
+    if ltv is None:
+        return "unknown"
+    if ltv <= 0.80:
+        return "good"
+    if ltv <= 0.90:
+        return "warning"
+    return "danger"
+
+
+@app.get("/api/reports/lender-metrics")
+async def get_lender_metrics(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return DSCR and LTV for each property from a lender's perspective.
+
+    DSCR = NOI / Annual Debt Service
+      NOI = trailing-12-month income - trailing-12-month operating expenses
+            (mortgage P&I and escrow are excluded from operating expenses)
+    LTV  = mortgage principal / purchase price
+      Note: we use the *original* mortgage principal as a proxy for current
+      balance because amortization tracking is not yet implemented (v1).
+    """
+    today = datetime.date.today()
+    twelve_months_ago = today - datetime.timedelta(days=365)
+
+    properties = db.query(Property).all()
+    transactions = (
+        db.query(Transaction)
+        .filter(
+            Transaction.transaction_date >= twelve_months_ago,
+            Transaction.status == "Paid",
+        )
+        .all()
+    )
+
+    # Aggregate income and operating expenses per property (trailing 12 months)
+    # Mortgage / debt service category is excluded from operating expenses
+    _DEBT_SERVICE_CATS = {"mortgage", "debt service", "mortgage interest"}
+
+    income_by_prop: Dict[int, float] = defaultdict(float)
+    op_expense_by_prop: Dict[int, float] = defaultdict(float)
+
+    for tx in transactions:
+        if not tx.transaction_date or not tx.property_id:
+            continue
+        tx_type = (tx.type or "").strip().lower()
+        cat = (tx.category or "").strip().lower()
+        if tx_type == "income":
+            income_by_prop[tx.property_id] += tx.amount
+        elif tx_type == "expense" and cat not in _DEBT_SERVICE_CATS:
+            op_expense_by_prop[tx.property_id] += tx.amount
+
+    property_rows = []
+    dscr_values: List[float] = []
+    ltv_values: List[float] = []
+    at_risk_count = 0
+
+    for prop in properties:
+        mortgage = db.query(Mortgage).filter(Mortgage.property_id == prop.id).first()
+
+        annual_income = income_by_prop.get(prop.id, 0.0)
+        annual_op_expense = op_expense_by_prop.get(prop.id, 0.0)
+        annual_noi = annual_income - annual_op_expense
+
+        # DSCR
+        dscr: Optional[float] = None
+        annual_debt_service: Optional[float] = None
+        if mortgage and mortgage.monthly_pi:
+            annual_debt_service = mortgage.monthly_pi * 12
+            if annual_debt_service > 0 and annual_income > 0:
+                dscr = round(annual_noi / annual_debt_service, 3)
+
+        # LTV — using original principal as current balance proxy
+        ltv: Optional[float] = None
+        mortgage_principal: Optional[float] = None
+        if mortgage:
+            mortgage_principal = mortgage.principal
+            if mortgage_principal and prop.purchase_price and prop.purchase_price > 0:
+                ltv = round(mortgage_principal / prop.purchase_price, 4)
+
+        dscr_s = _dscr_status(dscr)
+        ltv_s = _ltv_status(ltv)
+
+        if dscr_s in ("warning", "danger") or ltv_s in ("warning", "danger"):
+            at_risk_count += 1
+
+        if dscr is not None:
+            dscr_values.append(dscr)
+        if ltv is not None:
+            ltv_values.append(ltv)
+
+        property_rows.append({
+            "id": prop.id,
+            "address": prop.address,
+            "purchasePrice": prop.purchase_price,
+            "mortgagePrincipal": mortgage_principal,
+            "annualNOI": round(annual_noi, 2),
+            "annualDebtService": round(annual_debt_service, 2) if annual_debt_service is not None else None,
+            "dscr": dscr,
+            "ltv": ltv,
+            "dscrStatus": dscr_s,
+            "ltvStatus": ltv_s,
+        })
+
+    avg_dscr = round(sum(dscr_values) / len(dscr_values), 3) if dscr_values else None
+    avg_ltv = round(sum(ltv_values) / len(ltv_values), 4) if ltv_values else None
+
+    return {
+        "properties": property_rows,
+        "summary": {
+            "avgDscr": avg_dscr,
+            "avgLtv": avg_ltv,
+            "propertiesAtRisk": at_risk_count,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — Server-Side Amortization Engine
+# ---------------------------------------------------------------------------
+
+def generate_amortization_schedule(
+    principal: float,
+    annual_rate: float,
+    term_months: int,
+    extra_monthly_payment: float = 0.0,
+) -> List[Dict[str, Any]]:
+    """Generate a standard amortization schedule with optional extra payment.
+
+    Args:
+        principal: Original loan balance.
+        annual_rate: Annual interest rate as a decimal (e.g. 0.065 for 6.5%).
+        term_months: Loan term in months.
+        extra_monthly_payment: Optional additional principal per month (default 0).
+
+    Returns:
+        List of dicts, one per payment period:
+        {"month": int, "payment": float, "principal": float,
+         "interest": float, "balance": float}
+        Stops early if balance reaches zero (relevant when extra payments are made).
+    """
+    if principal <= 0 or annual_rate < 0 or term_months <= 0:
+        return []
+
+    monthly_rate = annual_rate / 1200.0  # annual_rate is decimal e.g. 0.065 → 0.065/12
+
+    # PMT formula: M = P * [r(1+r)^n] / [(1+r)^n - 1]
+    if monthly_rate == 0:
+        base_payment = principal / term_months
+    else:
+        r_n = (1 + monthly_rate) ** term_months
+        base_payment = principal * (monthly_rate * r_n) / (r_n - 1)
+
+    base_payment = round(base_payment, 2)
+
+    schedule = []
+    balance = principal
+
+    for month in range(1, term_months + 1):
+        if balance <= 0:
+            break
+
+        interest_charge = round(balance * monthly_rate, 2)
+        scheduled_principal = round(base_payment - interest_charge, 2)
+        total_principal = round(scheduled_principal + extra_monthly_payment, 2)
+
+        # Last payment: never overpay — clear the exact remaining balance.
+        # Also handle the final scheduled month where rounding accumulates a
+        # small residual (rounding base_payment to 2 decimals means the loan
+        # may not reach exactly zero in term_months — pay it off on the last month).
+        is_last_scheduled = month == term_months
+        if total_principal >= balance or is_last_scheduled:
+            total_principal = balance
+            payment = round(total_principal + interest_charge, 2)
+            balance = 0.0
+        else:
+            payment = round(base_payment + extra_monthly_payment, 2)
+            balance = round(balance - total_principal, 2)
+
+        schedule.append({
+            "month": month,
+            "payment": payment,
+            "principal": round(total_principal, 2),
+            "interest": interest_charge,
+            "balance": balance,
+        })
+
+        if balance == 0:
+            break
+
+    return schedule
+
+
+@app.get("/api/properties/{property_id}/amortization")
+async def get_amortization(
+    property_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the full amortization schedule for a property's mortgage."""
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    mortgage = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="No mortgage found for this property")
+
+    schedule = generate_amortization_schedule(
+        principal=mortgage.principal,
+        annual_rate=mortgage.interest_rate,
+        term_months=mortgage.term_months,
+    )
+
+    return {
+        "mortgage": _serialize_mortgage(mortgage),
+        "schedule": schedule,
+    }
+
+
+class WhatIfRequest(BaseModel):
+    extra_monthly_payment: float
+
+
+@app.post("/api/properties/{property_id}/amortization/what-if")
+async def amortization_what_if(
+    property_id: int,
+    body: WhatIfRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Compare standard vs. accelerated payoff with an extra monthly payment."""
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    mortgage = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
+    if not mortgage:
+        raise HTTPException(status_code=404, detail="No mortgage found for this property")
+
+    if body.extra_monthly_payment < 0:
+        raise HTTPException(status_code=400, detail="extra_monthly_payment must be non-negative")
+
+    standard_schedule = generate_amortization_schedule(
+        principal=mortgage.principal,
+        annual_rate=mortgage.interest_rate,
+        term_months=mortgage.term_months,
+    )
+    extra_schedule = generate_amortization_schedule(
+        principal=mortgage.principal,
+        annual_rate=mortgage.interest_rate,
+        term_months=mortgage.term_months,
+        extra_monthly_payment=body.extra_monthly_payment,
+    )
+
+    std_total_interest = round(sum(row["interest"] for row in standard_schedule), 2)
+    extra_total_interest = round(sum(row["interest"] for row in extra_schedule), 2)
+
+    std_payoff_months = len(standard_schedule)
+    extra_payoff_months = len(extra_schedule)
+
+    interest_saved = round(std_total_interest - extra_total_interest, 2)
+    months_saved = std_payoff_months - extra_payoff_months
+
+    return {
+        "standard": {
+            "totalInterest": std_total_interest,
+            "payoffMonths": std_payoff_months,
+        },
+        "withExtra": {
+            "totalInterest": extra_total_interest,
+            "payoffMonths": extra_payoff_months,
+            "extraPayment": body.extra_monthly_payment,
+        },
+        "savings": {
+            "interestSaved": interest_saved,
+            "monthsSaved": months_saved,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — Maintenance health agent endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agents/maintenance-health")
+async def maintenance_health(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Scan trailing-12-month transactions for spending anomalies.
+
+    Returns a list of alerts for expense categories that exceed 15% of
+    gross income at the property level. Alert messages are generated by
+    Claude when ANTHROPIC_API_KEY is set; otherwise a template is used.
+    """
+    alerts = analyze_maintenance_health(db)
+    return {"alerts": alerts, "count": len(alerts)}

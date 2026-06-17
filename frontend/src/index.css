@@ -895,3 +895,366 @@ header {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* ============================================================
+   B7: HOME PAGE ADDITIONS (Sprint 2)
+   ============================================================ */
+
+/* Eyebrow pill above hero headline */
+.home-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 0.35rem 1rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 1.75rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+
+/* 2-column feature grid variant */
+.features-grid-2col {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 900px) {
+  .features-grid-2col {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .features-grid-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Testimonials */
+.testimonials-section {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 5rem 2rem;
+  width: 100%;
+}
+
+.testimonials-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .testimonials-grid { grid-template-columns: 1fr; }
+}
+
+.testimonial-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.testimonial-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.08);
+}
+
+.testimonial-stars {
+  display: flex;
+  gap: 0.2rem;
+  color: var(--warning);
+}
+
+.testimonial-quote {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  font-style: italic;
+  flex: 1;
+}
+
+.testimonial-author {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.testimonial-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.testimonial-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.testimonial-title {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.1rem;
+}
+
+/* Trust Badges */
+.trust-badges-row {
+  width: 100%;
+  max-width: 900px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.trust-badges-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+}
+
+.trust-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.trust-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 0.3rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* CTA Section */
+.home-cta-section {
+  width: 100%;
+  max-width: 900px;
+  margin: 2rem auto 5rem;
+  padding: 4rem 2rem;
+  text-align: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  box-shadow: var(--glass-shadow);
+}
+
+/* ============================================================
+   B8: FINANCIAL TOOLS (Sprint 2)
+   ============================================================ */
+
+/* Tool selector — horizontal scrollable pill list */
+.tool-selector {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  margin-bottom: 2rem;
+  scrollbar-width: none;
+}
+
+.tool-selector::-webkit-scrollbar { display: none; }
+
+.tool-selector-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 180px;
+  text-align: left;
+  flex-shrink: 0;
+}
+
+.tool-selector-btn:hover {
+  background: var(--bg-tertiary);
+  transform: translateY(-1px);
+}
+
+.tool-selector-btn.active {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.tool-selector-icon {
+  color: var(--text-secondary);
+}
+
+.tool-selector-btn.active .tool-selector-icon {
+  color: rgba(255,255,255,0.7);
+}
+
+.tool-selector-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.tool-selector-btn.active .tool-selector-label {
+  color: #ffffff;
+}
+
+.tool-selector-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.tool-selector-btn.active .tool-selector-desc {
+  color: rgba(255,255,255,0.55);
+}
+
+/* Tool container — fade transition when switching tools */
+.tool-container {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+/* Two-column layout: inputs left, results right */
+.tool-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .tool-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tool-inputs {
+  position: sticky;
+  top: 5rem;
+}
+
+.tool-results {
+  min-width: 0;
+}
+
+.tool-section-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 1.25rem;
+}
+
+/* Result card grid */
+.tool-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 600px) {
+  .tool-results-grid { grid-template-columns: 1fr; }
+}
+
+.result-card {
+  padding: 1.25rem;
+}
+
+/* Progress bar */
+.tool-progress-bar-track {
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.tool-progress-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Break-even row */
+.tool-breakeven-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+/* Refi verdict banner */
+.tool-verdict {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.tool-verdict-positive {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.tool-verdict-negative {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.tool-verdict-neutral {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+/* ============================================================
+   CALENDAR
+   ============================================================ */
+
+.calendar-grid { width: 100%; overflow-x: auto; }
+.calendar-header-row { display: flex; align-items: center; border-bottom: 1px solid var(--glass-border); }
+.calendar-property-label { width: 200px; min-width: 200px; padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-days-header { flex: 1; display: grid; border-left: 1px solid var(--glass-border); }
+.calendar-day-label { text-align: center; font-size: 0.7rem; color: var(--text-secondary); padding: 0.4rem 0; border-right: 1px solid var(--glass-border); }
+.calendar-row { display: flex; align-items: center; border-bottom: 1px solid var(--glass-border); min-height: 44px; }
+.calendar-row:hover { background: var(--bg-tertiary); }
+.calendar-days-row { flex: 1; position: relative; height: 40px; border-left: 1px solid var(--glass-border); }
+.calendar-day-bg { position: absolute; top: 0; bottom: 0; border-right: 1px solid var(--glass-border); opacity: 0.3; }
+.calendar-tenant-bar { position: absolute; top: 6px; height: 28px; display: flex; align-items: center; padding: 0 8px; font-size: 0.72rem; font-weight: 500; color: white; cursor: default; transition: opacity 0.15s; overflow: hidden; white-space: nowrap; }
+.calendar-tenant-bar:hover { opacity: 0.85; }
+.calendar-legend { display: flex; gap: 1.5rem; align-items: center; margin-top: 1rem; padding: 0.75rem 1rem; }
+.calendar-legend-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--text-secondary); }
+.calendar-legend-dot { width: 10px; height: 10px; border-radius: 50%; }

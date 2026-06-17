@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - RE_PORTFOLIO_JWT_SECRET=${RE_PORTFOLIO_JWT_SECRET}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY:-}
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

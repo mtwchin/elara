@@ -70,13 +70,14 @@ elara/
 │   │   ├── auth.ts         # Auth utilities + mock API interceptor
 │   │   ├── index.css       # Design system (Light theme, EB Garamond + Inter)
 │   │   └── components/
-│   │       ├── Home.tsx        # Public landing page (hero + demo preview)
+│   │       ├── Home.tsx        # Public landing page (hero, testimonials, trust, CTA)
 │   │       ├── Login.tsx       # Authentication form
 │   │       ├── Dashboard.tsx   # Main dashboard with metrics, charts, alerts
 │   │       ├── Properties.tsx  # Property table view
 │   │       ├── Tenants.tsx     # Tenant management view
 │   │       ├── Transactions.tsx# Transaction log view
-│   │       └── Financials.tsx  # Financial analytics view
+│   │       ├── Financials.tsx  # Financial analytics view
+│   │       └── Tools.tsx       # 5 financial calculators (Deal, Mortgage, ProForma, Depreciation, Refi)
 │   └── ...
 │
 ├── backend/

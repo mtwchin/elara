@@ -17,6 +17,8 @@
   - `src/components/`:
     - `Dashboard.tsx`: Metrics, charts, and alerts. Shows live market data.
     - `Login.tsx`: Login view, updated to work with Clerk components.
+    - `Home.tsx`: Public landing page — hero, social proof bar, 6-feature grid, testimonials, trust badges, CTA.
+    - `Tools.tsx`: Five financial calculators (Deal Analyzer, Mortgage Calculator, Pro Forma Builder, Depreciation Tracker, Refinance Analyzer). All pure-frontend math, no backend calls.
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
@@ -26,6 +28,7 @@
 | 3 | Live Market Data | Implement RapidAPI client (Zillow API) in Python backend; fetch and parse live data; expose via backend; render in React dashboard. | M1 | IN_PROGRESS (Conv ID: 34440ed6-e239-4150-86ed-53df98ab4e10) |
 | 4 | E2E Verification | Integrate frontend/backend, run full E2E test suite (Tiers 1-4), verify 100% pass rate. | M2, M3 | PLANNED |
 | 5 | Adversarial Hardening | Run Tier 5 Challengers to verify edge-case robustness, code layout compliance, security boundaries; fix any gaps. | M4 | PLANNED |
+| 6 | Investor-Grade v2 (Sprint 2) | Logo navigation, Home page credibility overhaul (social proof, testimonials, trust badges, CTA), new Tools view with 5 financial calculators (Deal Analyzer, Mortgage, Pro Forma, Depreciation, Refinance). All frontend-only, no backend required. | None | DONE (2026-06-17) |
 
 ## Interface Contracts
 

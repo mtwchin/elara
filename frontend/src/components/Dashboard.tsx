@@ -7,6 +7,7 @@ interface DashboardData {
     monthlyRevenue: number;
     avgRoi: number;
     occupancyRate: number;
+    revenueMomPct: number | null;
   };
   chartData: {
     month: string;
@@ -33,15 +34,8 @@ const Dashboard: React.FC = () => {
         if (!res.ok) throw new Error('Failed to fetch dashboard data');
         return res.json();
       })
-      .then((json: DashboardData) => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setError(err.message);
-        setLoading(false);
-      });
+      .then((json: DashboardData) => { setData(json); setLoading(false); })
+      .catch((err) => { console.error(err); setError(err.message); setLoading(false); });
   }, []);
 
   if (loading) {
@@ -70,12 +64,19 @@ const Dashboard: React.FC = () => {
 
   const { metrics, chartData, alerts } = data;
 
-  const metricCards = [
-    { label: 'Total Portfolio Value', value: `$${metrics.totalPortfolioValue.toLocaleString()}`, trend: '↑ 2.4%', trendLabel: 'vs last month', positive: true },
-    { label: 'Monthly Revenue', value: `$${metrics.monthlyRevenue.toLocaleString()}`, trend: '↑ 1.2%', trendLabel: 'vs last month', positive: true },
-    { label: 'Avg. ROI', value: `${metrics.avgRoi.toFixed(1)}%`, trend: '↑ 0.3%', trendLabel: 'vs last year', positive: true },
-    { label: 'Occupancy Rate', value: `${metrics.occupancyRate.toFixed(1)}%`, trend: '↓ 1.5%', trendLabel: 'vs last month', positive: false },
-  ];
+  const revenueTrend = () => {
+    if (metrics.revenueMomPct === null || metrics.revenueMomPct === undefined) {
+      return <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No prior month data</span>;
+    }
+    const pct = metrics.revenueMomPct;
+    const positive = pct >= 0;
+    return (
+      <div className={`metric-trend ${positive ? 'text-success' : 'text-warning'}`}>
+        <span>{positive ? '↑' : '↓'} {Math.abs(pct).toFixed(1)}%</span>
+        <span style={{ color: 'var(--text-secondary)' }}>vs last month</span>
+      </div>
+    );
+  };
 
   return (
     <div className="app-container fade-in">
@@ -91,17 +92,24 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="dashboard-grid">
-        {/* Metrics Cards — staggered entrance (B3) */}
-        {metricCards.map((card, i) => (
-          <div key={i} className="glass-panel metric-card stagger-enter">
-            <div className="metric-label">{card.label}</div>
-            <div className="metric-value">{card.value}</div>
-            <div className={`metric-trend ${card.positive ? 'text-success' : 'text-warning'}`}>
-              <span>{card.trend}</span>
-              <span style={{ color: 'var(--text-secondary)' }}>{card.trendLabel}</span>
-            </div>
-          </div>
-        ))}
+        {/* Metrics Cards */}
+        <div className="glass-panel metric-card stagger-enter">
+          <div className="metric-label">Total Portfolio Value</div>
+          <div className="metric-value">${metrics.totalPortfolioValue.toLocaleString()}</div>
+        </div>
+        <div className="glass-panel metric-card stagger-enter">
+          <div className="metric-label">Monthly Revenue</div>
+          <div className="metric-value">${metrics.monthlyRevenue.toLocaleString()}</div>
+          {revenueTrend()}
+        </div>
+        <div className="glass-panel metric-card stagger-enter">
+          <div className="metric-label">Avg. ROI</div>
+          <div className="metric-value">{metrics.avgRoi.toFixed(1)}%</div>
+        </div>
+        <div className="glass-panel metric-card stagger-enter">
+          <div className="metric-label">Occupancy Rate</div>
+          <div className="metric-value">{metrics.occupancyRate.toFixed(1)}%</div>
+        </div>
 
         {/* Main Chart Area (B3: palette + legend) */}
         <div className="glass-panel main-chart stagger-enter" style={{ animationDelay: '0.33s' }}>
@@ -130,8 +138,8 @@ const Dashboard: React.FC = () => {
           }}>
             {chartData.map((d, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', gap: '4px', height: '100%', alignItems: 'flex-end' }}>
-                <div className="chart-bar-revenue" style={{ height: `${d.revenue}%` }} title={`Revenue: ${d.revenue}`}></div>
-                <div className="chart-bar-expenses" style={{ height: `${d.expenses}%` }} title={`Expenses: ${d.expenses}`}></div>
+                <div className="chart-bar-revenue" style={{ height: `${d.revenue}%` }}></div>
+                <div className="chart-bar-expenses" style={{ height: `${d.expenses}%` }}></div>
               </div>
             ))}
           </div>

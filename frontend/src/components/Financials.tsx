@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { authFetch, API_BASE, getToken } from '../auth';
+import { authFetch, getToken, API_BASE } from '../auth';
 
 interface PropertyCashFlow {
   id: number;
@@ -30,12 +30,8 @@ const Financials: React.FC = () => {
         if (!res.ok) throw new Error('Failed to fetch cash flow report');
         return res.json();
       })
-      .then((data: CashFlowReport) => {
-        setReport(data);
-      })
-      .catch((err) => {
-        setError(err.message);
-      })
+      .then((data) => setReport(data))
+      .catch((err) => setError(err instanceof Error ? err.message : 'An error occurred'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -43,8 +39,9 @@ const Financials: React.FC = () => {
     try {
       const token = getToken();
       const res = await fetch(`${API_BASE}/api/reports/rent-roll?format=csv`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
+
       if (!res.ok) throw new Error('Failed to export rent roll');
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -64,7 +61,7 @@ const Financials: React.FC = () => {
     try {
       const token = getToken();
       const res = await fetch(`${API_BASE}/api/reports/schedule-e?year=2026&format=csv`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error('Failed to export Schedule E');
       const blob = await res.blob();

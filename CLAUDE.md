@@ -3,32 +3,45 @@
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy + SQLite — `cd backend && source venv/bin/activate && uvicorn main:app --reload`
 - **Frontend**: React 19 + TypeScript + Vite — `cd frontend && npm run dev`
-- **Auth**: Clerk (`@clerk/clerk-react` installed but NOT wired up). Frontend currently uses mock login.
+- **Auth**: Local JWT (`auth.py` — register/login endpoints, HS256 tokens). Clerk is installed but not wired.
 - **Database**: SQLite file at `backend/portfolio.db` — seed with `cd backend && python seed.py`
+- **AI**: Google Gemini (`google-generativeai` package, `GOOGLE_API_KEY` env var)
+- **Docker**: `docker compose up --build` — builds backend + frontend, serves on ports 8000 and 80
 - **Testing**: pytest E2E suite at `tests/e2e/` (35 tests across 5 tiers, all expect real auth + market data)
 
-## Current State (2026-06-17)
-- **Frontend**: Fully functional with mock data. Light theme, EB Garamond + Inter typography.
-- **Backend**: Routes exist in `main.py` but auth middleware is not wired. Agent module is broken.
-- **Auth**: `frontend/src/auth.ts` contains a mock interceptor (lines ~27-53) that fakes API responses. Remove this once the backend is running.
-- **Mock Login**: `login()` in `auth.ts` sets a fake token. Replace with real Clerk auth.
+## Current State (2026-06-17, Sprint 3 shipped)
+- **Backend**: Fully functional. All CRUD routes wired, auth works, AI endpoints call Gemini.
+- **Frontend**: Hits real backend at `http://localhost:8000` (or `VITE_API_URL` in prod). No mock interceptor.
+- **Auth**: `login()` and `register()` hit `/api/auth/login-json` and `/api/auth/register`. JWT stored in localStorage.
+- **AI**: `agent.py` uses Google Gemini for renewal letters, portfolio advice, document extraction, maintenance alerts. Gracefully returns error dict when `GOOGLE_API_KEY` is absent.
+- **Seed data**: 3 properties, 3 tenants (one expiring, one leaving), 12 months of realistic transactions.
+- **Sprint 3**: Swapped Anthropic → Gemini, fixed import bug, seeded DB, Dockerized, production env config.
 
 ## Key Files
 - `backend/main.py` — all API routes (prefix: `/api/`)
-- `backend/auth.py` — JWT verification structure (needs Clerk JWKS)
-- `backend/models.py` — Property, Tenant, Transaction ORM models
-- `backend/agent.py` — AI agent skeleton (**BROKEN** — imports nonexistent `google.antigravity`)
+- `backend/auth.py` — JWT creation + verification (local HS256, with optional Clerk RS256 fallback)
+- `backend/models.py` — Property, Tenant, Transaction, Mortgage, Document ORM models
+- `backend/agent.py` — Gemini-powered AI: insights, renewal letters, portfolio advice, document extraction
 - `backend/database.py` — SQLAlchemy engine + `get_db` dependency
+- `backend/seed.py` — Demo user + 3 properties + 3 tenants + 12-month transactions
+- `backend/Dockerfile` — Python 3.12 slim image
 - `frontend/src/App.tsx` — Root layout: Home (public) → Login → Dashboard (authed)
-- `frontend/src/auth.ts` — Auth utilities + **mock API interceptor** (remove when backend is ready)
+- `frontend/src/auth.ts` — Auth utilities + `API_BASE` (reads `VITE_API_URL` env var)
 - `frontend/src/index.css` — Full design system (light theme, glass panels, font imports)
-- `frontend/src/components/Home.tsx` — Public landing page
+- `frontend/src/components/Home.tsx` — Public landing page (hero, testimonials, trust badges, CTA)
 - `frontend/src/components/Dashboard.tsx` — Main dashboard (metrics, charts, alerts)
+- `frontend/src/components/Tools.tsx` — 5 financial calculators (all client-side)
+- `frontend/src/components/Calendar.tsx` — Calendar view (exists, not yet wired to backend)
+- `frontend/Dockerfile` — Node 20 build → nginx serve (VITE_API_URL as build arg)
+- `frontend/nginx.conf` — SPA routing fallback config
+- `docker-compose.yml` — Orchestrates backend + frontend
 
 ## Data Models
 - **Property**: address, property_type, purchase_price, purchase_date, status
 - **Tenant**: name, email, phone, property_id (FK), lease_start, lease_end, rent_amount, intent
-- **Transaction**: property_id (FK), transaction_date, amount, category, type (income/expense), status
+- **Transaction**: property_id (FK), transaction_date, amount, category, type (income/expense), status, description
+- **Mortgage**: property_id (FK, unique), principal, interest_rate, term_months, lender, monthly_pi, monthly_escrow, origination_date
+- **Document**: transaction_id/property_id (FK, nullable), filename, storage_path, MIME type, AI extraction fields
 
 ## Design System
 - **Fonts**: EB Garamond (display headings), Inter (UI body text)
@@ -42,34 +55,50 @@
 - DB session via `get_db` dependency injection — never open sessions manually in routes
 - Frontend fetch: always use loading/error/data state pattern with useEffect
 - Styling: CSS custom properties defined in `index.css` (`var(--glass-bg)`, etc.)
-- Mock data: currently hardcoded in `authFetch()` interceptor in `auth.ts`
 
-## Known Issues
-- `backend/agent.py` imports `google.antigravity` — not a real package; needs Anthropic SDK replacement
-- `frontend/src/auth.ts` has a mock interceptor that bypasses all API calls — must be removed for real backend
-- `login()` function is mocked — sets a fake token without any server call
-- `Tenants`, `Transactions`, and `Financials` pages show empty states (mock returns `[]`)
-- Clerk is installed (`@clerk/clerk-react`) but not configured — no env vars set
-- `.agents/` directory contains old teamwork working files — safe to delete
-
-## Environment Variables Needed
+## Environment Variables
 ```
-# Frontend .env
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+# Backend (.env or Railway env vars)
+RE_PORTFOLIO_JWT_SECRET=long_random_secret   # required
+GOOGLE_API_KEY=your_key                      # required for AI features
+RAPIDAPI_KEY=                                # optional, Zillow market data
 
-# Backend .env
-CLERK_SECRET_KEY=sk_test_...
-RAPIDAPI_KEY=...
-ANTHROPIC_API_KEY=...
+# Frontend (build arg for Docker / Vercel env var)
+VITE_API_URL=https://your-backend.railway.app  # defaults to http://localhost:8000
 ```
+See `backend/.env.template` and `frontend/.env.example` for full reference.
+
+## Quick Start (local)
+```bash
+# Backend
+cd backend && python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.template .env   # fill in RE_PORTFOLIO_JWT_SECRET + GOOGLE_API_KEY
+python seed.py
+uvicorn main:app --reload
+
+# Frontend (new terminal)
+cd frontend && npm install && npm run dev
+# → http://localhost:5173, login: demo@example.com / demo1234
+```
+
+## Docker
+```bash
+cp backend/.env.template backend/.env   # fill in secrets
+VITE_API_URL=http://localhost:8000 docker compose up --build
+# → http://localhost (frontend) + http://localhost:8000 (backend)
+```
+
+## Deploy (Railway + Vercel)
+1. **Backend** → New Railway project, deploy `./backend`, set env vars: `RE_PORTFOLIO_JWT_SECRET`, `GOOGLE_API_KEY`
+2. **Frontend** → Vercel, root = `./frontend`, set `VITE_API_URL` = Railway backend URL
 
 ## Remaining Work (Priority Order)
-1. Wire up Clerk authentication (frontend + backend)
-2. Remove mock interceptor from `auth.ts` and connect to real backend
-3. Implement RapidAPI/Zillow market data integration
-4. Fix `agent.py` with Anthropic SDK
-5. Run E2E test suite: `cd tests && pytest e2e/ -v`
-6. Add richer data to Tenants/Transactions/Financials pages
+1. Wire Calendar.tsx to backend (events from transactions/lease dates)
+2. Run E2E test suite: `cd tests && pytest e2e/ -v` and fix failures
+3. Wire Clerk auth end-to-end (optional — local JWT works fine for v1)
+4. RapidAPI/Zillow integration (optional — fallback heuristic already works)
+5. Connect Deal Analyzer to live portfolio properties (pre-fill from selected property)
 
 ## See Also
 - `HANDOFF.md` — Comprehensive project handoff documentation

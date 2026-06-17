@@ -80,6 +80,7 @@ const Properties: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   // Property modal
   const [showPropertyModal, setShowPropertyModal] = useState(false);
@@ -97,41 +98,37 @@ const Properties: React.FC = () => {
   const [mortgageForm, setMortgageForm] = useState<MortgageFormData>(EMPTY_MORTGAGE_FORM);
   const [mortgageSubmitting, setMortgageSubmitting] = useState(false);
 
-  const fetchProperties = () => {
+  const fetchProperties = async () => {
     setLoading(true);
-    authFetch('/api/properties')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch properties');
-        return res.json();
-      })
-      .then((data: Property[]) => {
-        setProperties(data);
-      })
-      .catch((err) => {
-        setError(err.message);
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await authFetch('/api/properties');
+      if (!res.ok) throw new Error('Failed to fetch properties');
+      const data = await res.json();
+      setProperties(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     fetchProperties();
   }, []);
 
-  const fetchMortgage = (propertyId: number) => {
+  const fetchMortgage = async (propertyId: number) => {
     setMortgageLoading(true);
     setMortgage(undefined);
-    authFetch(`/api/properties/${propertyId}/mortgage`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch mortgage');
-        return res.json();
-      })
-      .then((data: Mortgage | null) => {
-        setMortgage(data);
-      })
-      .catch(() => {
-        setMortgage(null);
-      })
-      .finally(() => setMortgageLoading(false));
+    try {
+      const res = await authFetch(`/api/properties/${propertyId}/mortgage`);
+      if (!res.ok) throw new Error('Failed to fetch mortgage');
+      const data = await res.json();
+      setMortgage(data);
+    } catch {
+      setMortgage(null);
+    } finally {
+      setMortgageLoading(false);
+    }
   };
 
   const handleSelectRow = (id: number) => {
@@ -192,14 +189,8 @@ const Properties: React.FC = () => {
     };
     try {
       const res = editingProperty
-        ? await authFetch(`/api/properties/${editingProperty.id}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload),
-          })
-        : await authFetch('/api/properties', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          });
+        ? await authFetch(`/api/properties/${editingProperty.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+        : await authFetch('/api/properties', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save property');
       setShowPropertyModal(false);
       fetchProperties();
@@ -285,6 +276,12 @@ const Properties: React.FC = () => {
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
 
+  const filteredProperties = properties.filter((p) =>
+    [p.address, p.propertyType, p.status].some((v) =>
+      (v || '').toLowerCase().includes(search.toLowerCase())
+    )
+  );
+
   return (
     <div className="app-container fade-in">
       <div className="page-header">
@@ -293,9 +290,23 @@ const Properties: React.FC = () => {
           <p>Manage your real estate assets.</p>
         </div>
         <div className="page-header-actions">
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: '220px' }}
+          />
           <button className="btn btn-primary" onClick={openAddProperty}>Add Property</button>
         </div>
       </div>
+
+      {search.length > 0 && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          Showing {filteredProperties.length} of {properties.length}
+        </p>
+      )}
 
       <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
         <table className="data-table">
@@ -310,7 +321,7 @@ const Properties: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {properties.map((prop) => (
+            {filteredProperties.map((prop) => (
               <tr
                 key={prop.id}
                 onClick={() => handleSelectRow(prop.id)}
@@ -344,13 +355,15 @@ const Properties: React.FC = () => {
                 </td>
               </tr>
             ))}
-            {properties.length === 0 && (
+            {filteredProperties.length === 0 && (
               <tr>
                 <td colSpan={6}>
                   <div className="empty-state">
-                    <div className="empty-state-icon">🏠</div>
-                    <h3>No properties yet</h3>
-                    <p>Add your first property to get started with portfolio tracking.</p>
+                    <div className="empty-state-icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    </div>
+                    <h3>{search.length > 0 ? 'No properties match your search' : 'No properties yet'}</h3>
+                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add your first property to get started with portfolio tracking.'}</p>
                   </div>
                 </td>
               </tr>

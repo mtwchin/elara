@@ -1,7 +1,8 @@
 sqlalchemy
+python-dotenv
 fastapi
 uvicorn
-anthropic
+google-generativeai
 pyjwt
 bcrypt
 python-multipart

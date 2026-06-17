@@ -2,6 +2,8 @@
 
 import datetime
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from typing import Optional
 
 import bcrypt
@@ -14,7 +16,12 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import User
 
-JWT_SECRET = os.environ.get("RE_PORTFOLIO_JWT_SECRET", "dev-secret-change-me")
+JWT_SECRET = os.environ.get("RE_PORTFOLIO_JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError(
+        "RE_PORTFOLIO_JWT_SECRET is not set. "
+        "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = 24
 
@@ -59,7 +66,8 @@ def get_jwks_client():
     if not url:
         return None
     if not hasattr(get_jwks_client, "_client") or getattr(get_jwks_client, "_url", None) != url:
-        get_jwks_client._client = HTTPXPyJWKClient(url, cache_keys=False)
+        # Enable caching to avoid fetching JWKS on every request
+        get_jwks_client._client = HTTPXPyJWKClient(url, cache_keys=True)
         get_jwks_client._url = url
     return get_jwks_client._client
 
@@ -82,14 +90,12 @@ def get_current_user(
         if unverified_header.get("alg") == JWT_ALGORITHM:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
             email = payload.get("email")
-            if not email:
-                raise creds_exc
-            user = db.query(User).filter(User.email == email).first()
-            if not user:
-                raise creds_exc
-            return user
+            if email:
+                user = db.query(User).filter(User.email == email).first()
+                if user:
+                    return user
     except jwt.PyJWTError:
-        raise creds_exc
+        pass  # Fall back to Clerk
 
     # Fall back to Clerk RS256 token if JWKS URL is configured
     try:
@@ -106,15 +112,20 @@ def get_current_user(
             issuer=CLERK_ISSUER,
             options={"require": ["exp", "iss", "sub", "nbf"]}
         )
-    except (jwt.PyJWTError, Exception):
+    except (jwt.PyJWTError, Exception) as e:
+        print(f"Clerk auth error: {e}")
         raise creds_exc
 
-    email = payload.get("email")
+    # Clerk may store email in 'email' or 'email_address' claim depending on configuration
+    email = payload.get("email") or payload.get("email_address")
     if not email:
+        # If no email claim, try to use 'sub' or other identifiers if needed,
+        # but the requirement specifies using the email from the token.
         raise creds_exc
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
+        # Create local user for Clerk-authenticated users if they don't exist
         import secrets
         dummy_password = secrets.token_hex(32)
         user = User(email=email, hashed_password=hash_password(dummy_password))

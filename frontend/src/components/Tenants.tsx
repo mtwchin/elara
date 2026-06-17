@@ -86,6 +86,7 @@ const Tenants: React.FC = () => {
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   // Tenant modal
   const [showTenantModal, setShowTenantModal] = useState(false);
@@ -98,20 +99,18 @@ const Tenants: React.FC = () => {
   const [renewalResult, setRenewalResult] = useState<RenewalLetterResult | null>(null);
   const [showRenewalModal, setShowRenewalModal] = useState(false);
 
-  const fetchTenants = () => {
+  const fetchTenants = async () => {
     setLoading(true);
-    authFetch('/api/tenants')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch tenants');
-        return res.json();
-      })
-      .then((data: Tenant[]) => {
-        setTenants(data);
-      })
-      .catch((err) => {
-        setError(err.message);
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await authFetch('/api/tenants');
+      if (!res.ok) throw new Error('Failed to fetch tenants');
+      const data: Tenant[] = await res.json();
+      setTenants(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -169,14 +168,8 @@ const Tenants: React.FC = () => {
     };
     try {
       const res = editingTenant
-        ? await authFetch(`/api/tenants/${editingTenant.id}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload),
-          })
-        : await authFetch('/api/tenants', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          });
+        ? await authFetch(`/api/tenants/${editingTenant.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+        : await authFetch('/api/tenants', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save tenant');
       setShowTenantModal(false);
       fetchTenants();
@@ -235,6 +228,12 @@ const Tenants: React.FC = () => {
     return <span className={`badge ${variant}`}>{intent}</span>;
   };
 
+  const filteredTenants = tenants.filter((t) =>
+    [t.name, t.email, t.propertyAssigned].some((v) =>
+      (v || '').toLowerCase().includes(search.toLowerCase())
+    )
+  );
+
   return (
     <div className="app-container fade-in">
       <div className="page-header">
@@ -243,9 +242,23 @@ const Tenants: React.FC = () => {
           <p>Manage your renters and leases.</p>
         </div>
         <div className="page-header-actions">
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: '220px' }}
+          />
           <button className="btn btn-primary" onClick={openAddTenant}>Add Tenant</button>
         </div>
       </div>
+
+      {search.length > 0 && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          Showing {filteredTenants.length} of {tenants.length}
+        </p>
+      )}
 
       <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
         <table className="data-table">
@@ -261,7 +274,7 @@ const Tenants: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {tenants.map((tenant) => {
+            {filteredTenants.map((tenant) => {
               const showRenewalCta =
                 isWithin90Days(tenant.leaseEnd) && tenant.intent !== 'Vacate';
               return (
@@ -316,13 +329,15 @@ const Tenants: React.FC = () => {
                 </tr>
               );
             })}
-            {tenants.length === 0 && (
+            {filteredTenants.length === 0 && (
               <tr>
                 <td colSpan={7}>
                   <div className="empty-state">
-                    <div className="empty-state-icon">👤</div>
-                    <h3>No tenants yet</h3>
-                    <p>Add tenants and assign them to your properties.</p>
+                    <div className="empty-state-icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <h3>{search.length > 0 ? 'No tenants match your search' : 'No tenants yet'}</h3>
+                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add tenants and assign them to your properties.'}</p>
                   </div>
                 </td>
               </tr>

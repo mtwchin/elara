@@ -23,6 +23,7 @@ const Transactions: React.FC = () => {
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   // Form state
   const [date, setDate] = useState('');
@@ -33,20 +34,18 @@ const Transactions: React.FC = () => {
   const [status, setStatus] = useState('Paid');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchTransactions = () => {
+  const fetchTransactions = async () => {
     setLoading(true);
-    authFetch('/api/transactions')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch transactions');
-        return res.json();
-      })
-      .then((data: Transaction[]) => {
-        setTransactions(data);
-      })
-      .catch((err) => {
-        setError(err.message);
-      })
-      .finally(() => setLoading(false));
+    try {
+      const res = await authFetch('/api/transactions');
+      if (!res.ok) throw new Error('Failed to fetch transactions');
+      const data = await res.json();
+      setTransactions(data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -136,6 +135,12 @@ const Transactions: React.FC = () => {
     return <span className={`badge ${variant}`}>{t}</span>;
   };
 
+  const filteredTransactions = transactions.filter((tx) =>
+    [tx.property, tx.category, tx.type, tx.status].some((v) =>
+      (v || '').toLowerCase().includes(search.toLowerCase())
+    )
+  );
+
   return (
     <div className="app-container fade-in">
       <div className="page-header">
@@ -143,7 +148,23 @@ const Transactions: React.FC = () => {
           <h1 className="text-gradient">Transactions</h1>
           <p>Ledger and financial records.</p>
         </div>
+        <div className="page-header-actions">
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: '220px' }}
+          />
+        </div>
       </div>
+
+      {search.length > 0 && (
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          Showing {filteredTransactions.length} of {transactions.length}
+        </p>
+      )}
 
       {/* Transaction form */}
       <div className="glass-panel-static page-content">
@@ -230,7 +251,7 @@ const Transactions: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {transactions.map((tx) => (
+            {filteredTransactions.map((tx) => (
               <tr key={tx.id}>
                 <td>{tx.date}</td>
                 <td>{tx.property}</td>
@@ -245,18 +266,20 @@ const Transactions: React.FC = () => {
                     title={`${tx.documentCount} document${tx.documentCount !== 1 ? 's' : ''}`}
                     style={{ color: tx.documentCount > 0 ? 'var(--accent-purple)' : 'var(--text-secondary)', fontSize: '0.85rem' }}
                   >
-                    📎 {tx.documentCount}
+                    {tx.documentCount > 0 ? tx.documentCount : '—'}
                   </span>
                 </td>
               </tr>
             ))}
-            {transactions.length === 0 && (
+            {filteredTransactions.length === 0 && (
               <tr>
                 <td colSpan={7}>
                   <div className="empty-state">
-                    <div className="empty-state-icon">💰</div>
-                    <h3>No transactions yet</h3>
-                    <p>Log your first transaction using the form above.</p>
+                    <div className="empty-state-icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    </div>
+                    <h3>{search.length > 0 ? 'No transactions match your search' : 'No transactions yet'}</h3>
+                    <p>{search.length > 0 ? 'Try a different search term.' : 'Log your first transaction using the form above.'}</p>
                   </div>
                 </td>
               </tr>

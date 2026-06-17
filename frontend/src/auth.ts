@@ -1,7 +1,7 @@
 const TOKEN_KEY = 're_portfolio_token';
 const EMAIL_KEY = 're_portfolio_email';
 
-export const API_BASE = 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -21,7 +21,6 @@ export function clearSession() {
   localStorage.removeItem(EMAIL_KEY);
 }
 
-/** fetch wrapper that attaches the Bearer token and bounces to login on 401. */
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = getToken();
   const headers = new Headers(init.headers || {});
@@ -38,10 +37,6 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
   return res;
 }
 
-/**
- * Upload helper that attaches the Bearer token but does NOT set Content-Type,
- * allowing the browser to set the multipart boundary automatically.
- */
 export async function authUpload(input: string, formData: FormData): Promise<Response> {
   const token = getToken();
   const headers = new Headers();
