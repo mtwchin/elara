@@ -15,16 +15,16 @@
 
 Elara is a comprehensive real estate portfolio management system designed to bring modern software engineering and artificial intelligence to property investors. Featuring a blazing-fast React/Vite frontend, a robust FastAPI backend, and Google Gemini AI integration, Elara automates insights, tracks financials, and manages tenant relations seamlessly.
 
-## ✨ Features
+## Features
 
-- **📊 Comprehensive Portfolio Tracking**: Manage properties, tenants, and transactions in one unified dashboard.
-- **🤖 AI-Powered Insights**: Google Gemini AI continuously analyzes your data to provide rent optimization suggestions, predictive maintenance alerts, and automated document data extraction.
-- **📈 Advanced Financial Analytics**: Real-time metrics and charts for ROI, Cash Flow, Rent Roll, Schedule E, and Lender Metrics.
-- **🏠 Live Market Data**: Integrated seamlessly with the Zillow API (via RapidAPI) for real-time market averages, comparables, and regional rent tracking.
-- **🧮 Investor Toolsuite**: Built-in calculators for Deal Analysis, Mortgages, Pro Forma Building, Depreciation Tracking, and Refinance Analysis.
-- **🔒 Secure Authentication**: Self-contained, robust local JWT-powered authentication for secure access without third-party identity providers.
+- **Comprehensive Portfolio Tracking**: Manage properties, tenants, and transactions in one unified dashboard.
+- **AI-Powered Insights**: Google Gemini AI continuously analyzes your data to provide rent optimization suggestions, predictive maintenance alerts, and automated document data extraction.
+- **Advanced Financial Analytics**: Real-time metrics and charts for ROI, Cash Flow, Rent Roll, Schedule E, and Lender Metrics.
+- **Live Market Data**: Integrated seamlessly with the Zillow API (via RapidAPI) for real-time market averages, comparables, and regional rent tracking.
+- **Investor Toolsuite**: Built-in calculators for Deal Analysis, Mortgages, Pro Forma Building, Depreciation Tracking, and Refinance Analysis.
+- **Secure Authentication**: Self-contained, robust local JWT-powered authentication for secure access without third-party identity providers.
 
-## 🏗️ Architecture Stack
+## Architecture Stack
 
 Elara is built with a modern, scalable stack designed for reliability and speed.
 
@@ -34,7 +34,7 @@ Elara is built with a modern, scalable stack designed for reliability and speed.
 - **Testing**: Pytest (E2E, API, and Unit testing)
 - **Deployment**: Fully containerized with Docker Compose
 
-## 🚀 Getting Started
+## Getting Started
 
 The easiest way to get Elara running locally is via Docker Compose.
 
@@ -72,18 +72,17 @@ The easiest way to get Elara running locally is via Docker Compose.
    - **Backend API Docs**: http://localhost:8000/docs
 
 ### Local Development (Without Docker)
-For detailed local development setup instructions without Docker, please see our [Contributing Guide](CONTRIBUTING.md).
+To run the project locally without Docker, activate a virtual environment and install the Python requirements in `backend/` then run `uvicorn main:app --reload`. Finally, install the Node dependencies in `frontend/` and run `npm run dev`.
 
-## 📚 Documentation
+## Documentation
 
 We believe in comprehensive, high-quality documentation. Explore the deeper technical aspects of Elara:
 
 - [**ARCHITECTURE.md**](ARCHITECTURE.md): System design, data models, API contracts, and codebase layout.
 - [**TESTING.md**](TESTING.md): E2E test strategy, coverage, and instructions on running the test suite.
 - [**ROADMAP.md**](ROADMAP.md): Project milestones, future plans, and the transition to enterprise scale.
-- [**CONTRIBUTING.md**](CONTRIBUTING.md): Guidelines for developers, local setup, and coding conventions.
 
-## 🤝 Contributors
+## Contributors
 
 Elara was built by passionate engineers dedicated to modernizing real estate management.
 
@@ -92,5 +91,5 @@ Elara was built by passionate engineers dedicated to modernizing real estate man
 
 ---
 <div align="center">
-  <i>Built with ❤️ for Real Estate Investors</i>
+  <i>Built for Real Estate Investors</i>
 </div>
