@@ -4,19 +4,47 @@ Two layers:
 1. Rule-based `generate_insights(db)` — runs against the live DB on every
    dashboard load and produces deterministic, data-driven alerts. This is the
    primary input to /api/dashboard.
-2. An optional `get_real_estate_analyst_agent()` LLM agent (via the Google
-   Antigravity SDK) that can be invoked from an /api/agent/* endpoint when a
-   narrative, free-form analysis is wanted. It is not on the request hot path.
+2. `draft_renewal_letter(tenant_id, db)` — calls Claude (claude-sonnet-4-6)
+   via the Anthropic SDK to draft a professional lease renewal letter.
+   Returns a dict with `letter_text`, `suggested_rent`, and `market_context`.
+   Gracefully returns a 503-style error dict when ANTHROPIC_API_KEY is absent.
 """
 
+import os
 import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from models import Property, Tenant, Transaction
+from models import Property, Tenant, Transaction, Mortgage
 
+
+# ---------------------------------------------------------------------------
+# Anthropic SDK — imported lazily so the app still starts without the key.
+# ---------------------------------------------------------------------------
+
+def _get_anthropic_client():
+    """Return an Anthropic client or raise a clear RuntimeError."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. "
+            "Set the environment variable and restart the server."
+        )
+    try:
+        import anthropic
+        return anthropic.Anthropic(api_key=api_key)
+    except ImportError:
+        raise RuntimeError(
+            "The 'anthropic' package is not installed. "
+            "Run: pip install anthropic"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _humanize_delta(target: datetime.date) -> str:
     today = datetime.date.today()
@@ -31,6 +59,10 @@ def _humanize_delta(target: datetime.date) -> str:
         return f"{delta // 7} week{'s' if delta // 7 > 1 else ''} ago"
     return f"{delta // 30} month{'s' if delta // 30 > 1 else ''} ago"
 
+
+# ---------------------------------------------------------------------------
+# Rule-based insights (dashboard alerts)
+# ---------------------------------------------------------------------------
 
 def generate_insights(db: Session) -> List[Dict[str, Any]]:
     """Build the agent-alert feed from the live DB."""
@@ -84,9 +116,7 @@ def generate_insights(db: Session) -> List[Dict[str, Any]]:
             })
             next_id += 1
 
-    # 3. Maintenance-spike detection: any property whose maintenance
-    #    expense in the trailing 30 days is more than 2x its average monthly
-    #    maintenance spend over the prior 6 months.
+    # 3. Maintenance-spike detection.
     thirty_days_ago = today - datetime.timedelta(days=30)
     six_months_ago = today - datetime.timedelta(days=210)
 
@@ -125,8 +155,7 @@ def generate_insights(db: Session) -> List[Dict[str, Any]]:
             })
             next_id += 1
 
-    # 4. Rent-yield optimization: occupied properties whose monthly rent is
-    #    below 0.6% of purchase price (a rough threshold under the 1% rule).
+    # 4. Rent-yield optimization.
     rent_by_prop = {
         t.property_id: t.rent_amount
         for t in tenants
@@ -159,19 +188,88 @@ def generate_insights(db: Session) -> List[Dict[str, Any]]:
     return alerts
 
 
-def get_real_estate_analyst_agent():
-    """Return a Google Antigravity Agent configured as a Real Estate Analyst.
+# ---------------------------------------------------------------------------
+# AI: Lease renewal letter
+# ---------------------------------------------------------------------------
 
-    This is an opt-in path; importing the SDK and calling it requires
-    credentials. Keep it isolated from request-time code.
+def draft_renewal_letter(
+    tenant_id: int,
+    db: Session,
+    market_rent: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Draft a professional lease renewal letter using Claude.
+
+    Returns a dict:
+      {
+        "letter_text": str,
+        "suggested_rent": float,
+        "market_context": str,
+      }
+
+    On missing API key or package, returns an error dict with key "error".
     """
-    from google.antigravity import Agent, LocalAgentConfig
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        return {"error": f"Tenant {tenant_id} not found."}
 
-    system_instruction = (
-        "You are a Real Estate Analyst. Given a JSON payload of properties, "
-        "tenants, and transactions, produce concise, actionable insights about "
-        "yield, occupancy risk, and maintenance trends. Return at most 5 "
-        "bullet points."
-    )
-    config = LocalAgentConfig(system_instructions=system_instruction)
-    return Agent(config)
+    prop = db.query(Property).filter(Property.id == tenant.property_id).first()
+    prop_address = prop.address if prop else "the property"
+
+    today = datetime.date.today()
+    current_rent = tenant.rent_amount or 0.0
+
+    # Determine suggested rent: use passed market_rent or fall back to +3%
+    if market_rent and market_rent > 0:
+        suggested_rent = round(market_rent / 50) * 50  # round to nearest $50
+        market_context = f"Based on current market data, comparable units rent for ~${market_rent:,.0f}/month."
+    else:
+        suggested_rent = round(current_rent * 1.03 / 25) * 25  # +3%, round to $25
+        market_context = "Market data unavailable; suggested rent is based on a standard 3% annual adjustment."
+
+    lease_end_str = tenant.lease_end.strftime("%B %d, %Y") if tenant.lease_end else "your current lease end date"
+    days_remaining = (tenant.lease_end - today).days if tenant.lease_end else 0
+
+    prompt = f"""Draft a professional, warm lease renewal letter from a property manager to a tenant.
+
+Tenant name: {tenant.name}
+Property address: {prop_address}
+Current monthly rent: ${current_rent:,.2f}
+Proposed new monthly rent: ${suggested_rent:,.2f}
+Current lease end date: {lease_end_str}
+Days remaining on lease: {days_remaining}
+Tenant's renewal intent: {tenant.intent or 'Undecided'}
+
+Requirements:
+- Address the tenant by first name
+- Thank them for being a tenant
+- Clearly state the proposed new rent
+- Propose a new 12-month lease starting from the current end date
+- Include a response deadline of 30 days before lease expiration
+- Keep it under 300 words
+- Professional but friendly tone
+- Do NOT include a signature block placeholder — end with a closing line only
+"""
+
+    try:
+        client = _get_anthropic_client()
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            system=(
+                "You are an experienced property manager drafting clear, professional "
+                "lease renewal letters. Write only the letter text — no preamble, "
+                "no explanation, no markdown formatting."
+            ),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        letter_text = response.content[0].text.strip()
+    except RuntimeError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"AI generation failed: {str(e)}"}
+
+    return {
+        "letter_text": letter_text,
+        "suggested_rent": suggested_rent,
+        "market_context": market_context,
+    }

@@ -23,6 +23,10 @@ htmlcov/
 # Databases
 backend/portfolio.db
 
+# Uploaded documents (user files — not committed)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

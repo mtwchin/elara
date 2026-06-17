@@ -5,16 +5,100 @@ interface Property {
   id: number;
   address: string;
   propertyType: string;
+  purchasePrice: number;
   purchaseDate: string;
   status: string;
 }
+
+interface Mortgage {
+  id: number;
+  propertyId: number;
+  lender: string | null;
+  principal: number;
+  interestRate: number;
+  termMonths: number;
+  monthlyPi: number;
+  monthlyEscrow: number;
+}
+
+interface PropertyFormData {
+  address: string;
+  propertyType: string;
+  purchasePrice: string;
+  purchaseDate: string;
+  status: string;
+}
+
+interface MortgageFormData {
+  lender: string;
+  principal: string;
+  interest_rate: string;
+  term_months: string;
+  monthly_pi: string;
+  monthly_escrow: string;
+}
+
+const EMPTY_PROPERTY_FORM: PropertyFormData = {
+  address: '',
+  propertyType: 'Residential',
+  purchasePrice: '',
+  purchaseDate: '',
+  status: 'Active',
+};
+
+const EMPTY_MORTGAGE_FORM: MortgageFormData = {
+  lender: '',
+  principal: '',
+  interest_rate: '',
+  term_months: '',
+  monthly_pi: '',
+  monthly_escrow: '',
+};
+
+const overlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 1000,
+  background: 'rgba(0,0,0,0.4)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+const modalStyle: React.CSSProperties = {
+  background: 'var(--glass-bg)',
+  backdropFilter: 'blur(12px)',
+  borderRadius: '16px',
+  border: '1px solid var(--glass-border)',
+  padding: '2rem',
+  width: '100%',
+  maxWidth: '520px',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+};
 
 const Properties: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Property modal
+  const [showPropertyModal, setShowPropertyModal] = useState(false);
+  const [editingProperty, setEditingProperty] = useState<Property | null>(null);
+  const [propertyForm, setPropertyForm] = useState<PropertyFormData>(EMPTY_PROPERTY_FORM);
+  const [propertySubmitting, setPropertySubmitting] = useState(false);
+
+  // Selected property for mortgage section
+  const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null);
+  const [mortgage, setMortgage] = useState<Mortgage | null | undefined>(undefined);
+  const [mortgageLoading, setMortgageLoading] = useState(false);
+
+  // Mortgage modal
+  const [showMortgageModal, setShowMortgageModal] = useState(false);
+  const [mortgageForm, setMortgageForm] = useState<MortgageFormData>(EMPTY_MORTGAGE_FORM);
+  const [mortgageSubmitting, setMortgageSubmitting] = useState(false);
+
+  const fetchProperties = () => {
+    setLoading(true);
     authFetch('/api/properties')
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch properties');
@@ -22,19 +106,160 @@ const Properties: React.FC = () => {
       })
       .then((data: Property[]) => {
         setProperties(data);
-        setLoading(false);
       })
       .catch((err) => {
-        console.error(err);
         setError(err.message);
-        setLoading(false);
-      });
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchProperties();
   }, []);
+
+  const fetchMortgage = (propertyId: number) => {
+    setMortgageLoading(true);
+    setMortgage(undefined);
+    authFetch(`/api/properties/${propertyId}/mortgage`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch mortgage');
+        return res.json();
+      })
+      .then((data: Mortgage | null) => {
+        setMortgage(data);
+      })
+      .catch(() => {
+        setMortgage(null);
+      })
+      .finally(() => setMortgageLoading(false));
+  };
+
+  const handleSelectRow = (id: number) => {
+    if (selectedPropertyId === id) {
+      setSelectedPropertyId(null);
+      setMortgage(undefined);
+    } else {
+      setSelectedPropertyId(id);
+      fetchMortgage(id);
+    }
+  };
+
+  // Property modal handlers
+  const openAddProperty = () => {
+    setEditingProperty(null);
+    setPropertyForm(EMPTY_PROPERTY_FORM);
+    setShowPropertyModal(true);
+  };
+
+  const openEditProperty = (prop: Property, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingProperty(prop);
+    setPropertyForm({
+      address: prop.address,
+      propertyType: prop.propertyType,
+      purchasePrice: String(prop.purchasePrice),
+      purchaseDate: prop.purchaseDate || '',
+      status: prop.status,
+    });
+    setShowPropertyModal(true);
+  };
+
+  const handleDeleteProperty = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this property? This cannot be undone.')) return;
+    try {
+      const res = await authFetch(`/api/properties/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete property');
+      setProperties((prev) => prev.filter((p) => p.id !== id));
+      if (selectedPropertyId === id) {
+        setSelectedPropertyId(null);
+        setMortgage(undefined);
+      }
+    } catch (err: unknown) {
+      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
+  const handlePropertySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPropertySubmitting(true);
+    const payload = {
+      address: propertyForm.address,
+      propertyType: propertyForm.propertyType,
+      purchasePrice: parseFloat(propertyForm.purchasePrice),
+      purchaseDate: propertyForm.purchaseDate,
+      status: propertyForm.status,
+    };
+    try {
+      const res = editingProperty
+        ? await authFetch(`/api/properties/${editingProperty.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          })
+        : await authFetch('/api/properties', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+      if (!res.ok) throw new Error('Failed to save property');
+      setShowPropertyModal(false);
+      fetchProperties();
+    } catch (err: unknown) {
+      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setPropertySubmitting(false);
+    }
+  };
+
+  // Mortgage modal handlers
+  const openMortgageModal = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (mortgage) {
+      setMortgageForm({
+        lender: mortgage.lender || '',
+        principal: String(mortgage.principal),
+        interest_rate: String(mortgage.interestRate),
+        term_months: String(mortgage.termMonths),
+        monthly_pi: String(mortgage.monthlyPi),
+        monthly_escrow: String(mortgage.monthlyEscrow),
+      });
+    } else {
+      setMortgageForm(EMPTY_MORTGAGE_FORM);
+    }
+    setShowMortgageModal(true);
+  };
+
+  const handleMortgageSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPropertyId) return;
+    setMortgageSubmitting(true);
+    const payload = {
+      lender: mortgageForm.lender || null,
+      principal: parseFloat(mortgageForm.principal),
+      interest_rate: parseFloat(mortgageForm.interest_rate),
+      term_months: parseInt(mortgageForm.term_months, 10),
+      monthly_pi: parseFloat(mortgageForm.monthly_pi),
+      monthly_escrow: mortgageForm.monthly_escrow ? parseFloat(mortgageForm.monthly_escrow) : 0,
+    };
+    try {
+      const method = mortgage ? 'PUT' : 'POST';
+      const res = await authFetch(`/api/properties/${selectedPropertyId}/mortgage`, {
+        method,
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save mortgage');
+      setShowMortgageModal(false);
+      fetchMortgage(selectedPropertyId);
+    } catch (err: unknown) {
+      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setMortgageSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="app-container fade-in">
-        <div style={{ padding: '2rem' }}><h2>Loading Properties...</h2></div>
+      <div className="app-container">
+        <div className="loading-container fade-in">Loading Properties...</div>
       </div>
     );
   }
@@ -42,65 +267,290 @@ const Properties: React.FC = () => {
   if (error) {
     return (
       <div className="app-container fade-in">
-        <div style={{ padding: '2rem', color: 'var(--danger)' }}>
-          <h2>Error</h2>
+        <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
+          <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
           <p>{error}</p>
         </div>
       </div>
     );
   }
 
+  const statusBadge = (status: string) => {
+    const variant =
+      status === 'Occupied' ? 'badge-success' :
+      status === 'Vacant' ? 'badge-warning' :
+      'badge-warning';
+    return <span className={`badge ${variant}`}>{status}</span>;
+  };
+
+  const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
+
   return (
     <div className="app-container fade-in">
-      <header>
-        <div>
+      <div className="page-header">
+        <div className="page-header-info">
           <h1 className="text-gradient">Properties</h1>
           <p>Manage your real estate assets.</p>
         </div>
-        <div className="header-actions">
-          <button className="btn btn-primary">Add Property</button>
+        <div className="page-header-actions">
+          <button className="btn btn-primary" onClick={openAddProperty}>Add Property</button>
         </div>
-      </header>
+      </div>
 
-      <div className="glass-panel" style={{ marginTop: '2rem', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
+        <table className="data-table">
           <thead>
             <tr>
-              <th style={{ padding: '1rem', textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>Address</th>
-              <th style={{ padding: '1rem', textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>Property Type</th>
-              <th style={{ padding: '1rem', textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>Purchase Date</th>
-              <th style={{ padding: '1rem', textAlign: 'left', color: 'var(--text-secondary)', borderBottom: '1px solid var(--glass-border)' }}>Status</th>
+              <th>Address</th>
+              <th>Purchase Price</th>
+              <th>Property Type</th>
+              <th>Purchase Date</th>
+              <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {properties.map((prop) => (
-              <tr key={prop.id} style={{ transition: 'background 0.2s' }}>
-                <td style={{ padding: '1rem', borderBottom: '1px solid var(--glass-border)' }}>{prop.address}</td>
-                <td style={{ padding: '1rem', borderBottom: '1px solid var(--glass-border)' }}>{prop.propertyType}</td>
-                <td style={{ padding: '1rem', borderBottom: '1px solid var(--glass-border)' }}>{prop.purchaseDate}</td>
-                <td style={{ padding: '1rem', borderBottom: '1px solid var(--glass-border)' }}>
-                  <span style={{ 
-                    padding: '0.25rem 0.75rem', 
-                    borderRadius: '999px', 
-                    fontSize: '0.85rem',
-                    background: prop.status === 'Occupied' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                    color: prop.status === 'Occupied' ? 'var(--success)' : 'var(--warning)'
-                  }}>
-                    {prop.status}
-                  </span>
+              <tr
+                key={prop.id}
+                onClick={() => handleSelectRow(prop.id)}
+                style={{
+                  cursor: 'pointer',
+                  background: selectedPropertyId === prop.id ? 'rgba(147,51,234,0.06)' : undefined,
+                }}
+              >
+                <td style={{ fontWeight: 500 }}>{prop.address}</td>
+                <td>${prop.purchasePrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                <td>{prop.propertyType}</td>
+                <td>{prop.purchaseDate}</td>
+                <td>{statusBadge(prop.status)}</td>
+                <td>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      className="btn"
+                      style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+                      onClick={(e) => openEditProperty(prop, e)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
+                      onClick={(e) => handleDeleteProperty(prop.id, e)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
             {properties.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                  No properties found.
+                <td colSpan={6}>
+                  <div className="empty-state">
+                    <div className="empty-state-icon">🏠</div>
+                    <h3>No properties yet</h3>
+                    <p>Add your first property to get started with portfolio tracking.</p>
+                  </div>
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Mortgage section */}
+      {selectedPropertyId && selectedProperty && (
+        <div className="glass-panel-static" style={{ marginTop: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3>Mortgage Details — {selectedProperty.address}</h3>
+            {!mortgageLoading && (
+              <button className="btn btn-primary" style={{ fontSize: '0.85rem', padding: '0.4rem 1rem' }} onClick={openMortgageModal}>
+                {mortgage ? 'Edit Mortgage' : 'Add Mortgage'}
+              </button>
+            )}
+          </div>
+
+          {mortgageLoading ? (
+            <p style={{ color: 'var(--text-secondary)' }}>Loading mortgage details...</p>
+          ) : mortgage ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '1rem' }}>
+              {[
+                { label: 'Lender', value: mortgage.lender || '—' },
+                { label: 'Principal', value: `$${mortgage.principal?.toLocaleString()}` },
+                { label: 'Interest Rate', value: `${mortgage.interestRate}%` },
+                { label: 'Term', value: `${mortgage.termMonths} mo` },
+                { label: 'Monthly P&I', value: `$${mortgage.monthlyPi?.toLocaleString()}` },
+                { label: 'Monthly Escrow', value: `$${mortgage.monthlyEscrow?.toLocaleString()}` },
+              ].map(({ label, value }) => (
+                <div key={label} className="metric-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: '10px' }}>
+                  <div className="metric-label">{label}</div>
+                  <div style={{ fontWeight: 600, fontSize: '1.05rem', marginTop: '0.25rem' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-secondary)' }}>No mortgage on file for this property.</p>
+          )}
+        </div>
+      )}
+
+      {/* Property add/edit modal */}
+      {showPropertyModal && (
+        <div style={overlayStyle} onClick={() => setShowPropertyModal(false)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginBottom: '1.5rem' }}>{editingProperty ? 'Edit Property' : 'Add Property'}</h2>
+            <form onSubmit={handlePropertySubmit}>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Address</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  required
+                  value={propertyForm.address}
+                  onChange={(e) => setPropertyForm({ ...propertyForm, address: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Property Type</label>
+                <select
+                  className="form-input"
+                  value={propertyForm.propertyType}
+                  onChange={(e) => setPropertyForm({ ...propertyForm, propertyType: e.target.value })}
+                >
+                  <option value="Residential">Residential</option>
+                  <option value="Commercial">Commercial</option>
+                  <option value="Multi-Family">Multi-Family</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Purchase Price</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  required
+                  min="0"
+                  step="1"
+                  value={propertyForm.purchasePrice}
+                  onChange={(e) => setPropertyForm({ ...propertyForm, purchasePrice: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Purchase Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  required
+                  value={propertyForm.purchaseDate}
+                  onChange={(e) => setPropertyForm({ ...propertyForm, purchaseDate: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Status</label>
+                <select
+                  className="form-input"
+                  value={propertyForm.status}
+                  onChange={(e) => setPropertyForm({ ...propertyForm, status: e.target.value })}
+                >
+                  <option value="Active">Active</option>
+                  <option value="Vacant">Vacant</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setShowPropertyModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={propertySubmitting}>
+                  {propertySubmitting ? 'Saving...' : 'Save Property'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Mortgage add/edit modal */}
+      {showMortgageModal && (
+        <div style={overlayStyle} onClick={() => setShowMortgageModal(false)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginBottom: '1.5rem' }}>{mortgage ? 'Edit Mortgage' : 'Add Mortgage'}</h2>
+            <form onSubmit={handleMortgageSubmit}>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Lender</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={mortgageForm.lender}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, lender: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Principal ($)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  required
+                  min="0"
+                  step="0.01"
+                  value={mortgageForm.principal}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, principal: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Interest Rate (%)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  required
+                  min="0"
+                  step="0.01"
+                  value={mortgageForm.interest_rate}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, interest_rate: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Term (months)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  required
+                  min="1"
+                  step="1"
+                  value={mortgageForm.term_months}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, term_months: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Monthly P&I ($)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  required
+                  min="0"
+                  step="0.01"
+                  value={mortgageForm.monthly_pi}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_pi: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Monthly Escrow ($)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  min="0"
+                  step="0.01"
+                  value={mortgageForm.monthly_escrow}
+                  onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_escrow: e.target.value })}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setShowMortgageModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={mortgageSubmitting}>
+                  {mortgageSubmitting ? 'Saving...' : 'Save Mortgage'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

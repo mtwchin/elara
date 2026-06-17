@@ -57,7 +57,7 @@ uvicorn main:app --reload
 ## 4. Project Structure
 
 ```
-real-estate-portfolio/
+elara/
 ├── PROJECT.md              # Architecture & milestone tracker (created by teamwork agents)
 ├── CLAUDE.md               # Agent instructions for Claude Code
 ├── TEST_INFRA.md           # E2E test infrastructure documentation
@@ -280,3 +280,4 @@ If you're picking this project back up with a new agent orchestration setup:
 - [ ] Fix `backend/agent.py` (replace `google.antigravity` with Anthropic SDK)
 - [ ] Run tests: `cd tests && pytest e2e/ -v`
 - [ ] The `.agents/` directory contains old teamwork working files — safe to delete
+iles — safe to delete

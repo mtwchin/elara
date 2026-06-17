@@ -1,6 +1,6 @@
 # Test Infrastructure Documentation (TEST_INFRA)
 
-This document outlines the testing philosophy, feature inventory, test architecture, and coverage thresholds for the Real Estate Portfolio Manager application.
+This document outlines the testing philosophy, feature inventory, test architecture, and coverage thresholds for the Elara application.
 
 ---
 

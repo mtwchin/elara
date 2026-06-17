@@ -70,92 +70,72 @@ const Dashboard: React.FC = () => {
 
   const { metrics, chartData, alerts } = data;
 
+  const metricCards = [
+    { label: 'Total Portfolio Value', value: `$${metrics.totalPortfolioValue.toLocaleString()}`, trend: '↑ 2.4%', trendLabel: 'vs last month', positive: true },
+    { label: 'Monthly Revenue', value: `$${metrics.monthlyRevenue.toLocaleString()}`, trend: '↑ 1.2%', trendLabel: 'vs last month', positive: true },
+    { label: 'Avg. ROI', value: `${metrics.avgRoi.toFixed(1)}%`, trend: '↑ 0.3%', trendLabel: 'vs last year', positive: true },
+    { label: 'Occupancy Rate', value: `${metrics.occupancyRate.toFixed(1)}%`, trend: '↓ 1.5%', trendLabel: 'vs last month', positive: false },
+  ];
+
   return (
     <div className="app-container fade-in">
-      <header>
-        <div>
+      <div className="page-header">
+        <div className="page-header-info">
           <h1 className="text-gradient">Portfolio Overview</h1>
           <p>Welcome back! Here's what's happening with your properties today.</p>
         </div>
-        <div className="header-actions">
+        <div className="page-header-actions">
           <button className="btn">Export Report</button>
           <button className="btn btn-primary">Add Property</button>
         </div>
-      </header>
+      </div>
 
       <div className="dashboard-grid">
-        {/* Metrics Cards */}
-        <div className="glass-panel metric-card" style={{ animationDelay: '0.1s' }}>
-          <div className="metric-label">Total Portfolio Value</div>
-          <div className="metric-value">${metrics.totalPortfolioValue.toLocaleString()}</div>
-          <div className="metric-trend text-success">
-            <span>↑ 2.4%</span>
-            <span style={{ color: 'var(--text-secondary)' }}>vs last month</span>
+        {/* Metrics Cards — staggered entrance (B3) */}
+        {metricCards.map((card, i) => (
+          <div key={i} className="glass-panel metric-card stagger-enter">
+            <div className="metric-label">{card.label}</div>
+            <div className="metric-value">{card.value}</div>
+            <div className={`metric-trend ${card.positive ? 'text-success' : 'text-warning'}`}>
+              <span>{card.trend}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{card.trendLabel}</span>
+            </div>
           </div>
-        </div>
+        ))}
 
-        <div className="glass-panel metric-card" style={{ animationDelay: '0.2s' }}>
-          <div className="metric-label">Monthly Revenue</div>
-          <div className="metric-value">${metrics.monthlyRevenue.toLocaleString()}</div>
-          <div className="metric-trend text-success">
-            <span>↑ 1.2%</span>
-            <span style={{ color: 'var(--text-secondary)' }}>vs last month</span>
-          </div>
-        </div>
-
-        <div className="glass-panel metric-card" style={{ animationDelay: '0.3s' }}>
-          <div className="metric-label">Avg. ROI</div>
-          <div className="metric-value">{metrics.avgRoi.toFixed(1)}%</div>
-          <div className="metric-trend text-success">
-            <span>↑ 0.3%</span>
-            <span style={{ color: 'var(--text-secondary)' }}>vs last year</span>
-          </div>
-        </div>
-
-        <div className="glass-panel metric-card" style={{ animationDelay: '0.4s' }}>
-          <div className="metric-label">Occupancy Rate</div>
-          <div className="metric-value">{metrics.occupancyRate.toFixed(1)}%</div>
-          <div className="metric-trend text-warning">
-            <span>↓ 1.5%</span>
-            <span style={{ color: 'var(--text-secondary)' }}>vs last month</span>
-          </div>
-        </div>
-
-        {/* Main Chart Area */}
-        <div className="glass-panel main-chart" style={{ animationDelay: '0.5s' }}>
+        {/* Main Chart Area (B3: palette + legend) */}
+        <div className="glass-panel main-chart stagger-enter" style={{ animationDelay: '0.33s' }}>
           <h2>Revenue vs Expenses</h2>
           <p>Year-to-date performance across all properties.</p>
-          <div style={{ 
-            height: '250px', 
-            marginTop: '2rem', 
-            display: 'flex', 
-            alignItems: 'flex-end', 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+            <div className="chart-legend">
+              <div className="chart-legend-item">
+                <div className="chart-legend-dot" style={{ background: 'var(--chart-revenue)' }}></div>
+                Revenue
+              </div>
+              <div className="chart-legend-item">
+                <div className="chart-legend-dot" style={{ background: 'var(--chart-expenses)' }}></div>
+                Expenses
+              </div>
+            </div>
+          </div>
+          <div style={{
+            height: '230px',
+            marginTop: '1.5rem',
+            display: 'flex',
+            alignItems: 'flex-end',
             gap: '2%',
             padding: '1rem 0',
             borderBottom: '1px solid var(--glass-border)'
           }}>
             {chartData.map((d, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', gap: '4px', height: '100%', alignItems: 'flex-end' }}>
-                <div style={{ 
-                  width: '100%', 
-                  background: 'var(--accent-blue)', 
-                  height: `${d.revenue}%`, 
-                  borderRadius: '6px 6px 0 0', 
-                  opacity: 0.9,
-                  transition: 'height 1s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                }} title={`Revenue: ${d.revenue}`}></div>
-                <div style={{ 
-                  width: '100%', 
-                  background: 'var(--text-secondary)', 
-                  height: `${d.expenses}%`, 
-                  borderRadius: '6px 6px 0 0', 
-                  opacity: 0.5,
-                  transition: 'height 1s cubic-bezier(0.34, 1.56, 0.64, 1)'
-                }} title={`Expenses: ${d.expenses}`}></div>
+                <div className="chart-bar-revenue" style={{ height: `${d.revenue}%` }} title={`Revenue: ${d.revenue}`}></div>
+                <div className="chart-bar-expenses" style={{ height: `${d.expenses}%` }} title={`Expenses: ${d.expenses}`}></div>
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 500 }}>
             {chartData.map((d, i) => (
               <span key={i}>{d.month}</span>
             ))}
@@ -163,10 +143,10 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Agent Alerts */}
-        <div className="glass-panel agent-alerts" style={{ animationDelay: '0.6s' }}>
+        <div className="glass-panel agent-alerts stagger-enter" style={{ animationDelay: '0.4s' }}>
           <h2>Agent Alerts</h2>
           <p>AI-driven insights and required actions.</p>
-          
+
           <div className="alert-list">
             {alerts.map((alert) => (
               <div key={alert.id} className="alert-item">

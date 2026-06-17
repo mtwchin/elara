@@ -1,10 +1,14 @@
 import React from 'react';
+import type { Theme } from '../theme';
+import elaraLogo from '../assets/elara.jpg';
 
 interface Props {
   onLoginClick: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
-const Home: React.FC<Props> = ({ onLoginClick }) => {
+const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Navigation */}
@@ -22,22 +26,53 @@ const Home: React.FC<Props> = ({ onLoginClick }) => {
         borderBottom: '1px solid rgba(0,0,0,0.05)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div style={{ width: '28px', height: '28px', background: 'var(--text-primary)', borderRadius: '6px' }}></div>
-          <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: "'EB Garamond', serif", fontWeight: 600 }}>RE Portfolio</h2>
+          <img src={elaraLogo} alt="Elara" style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover' }} />
+          <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: "'EB Garamond', serif", fontWeight: 600 }}>Elara</h2>
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }} onClick={onLoginClick}>Sign In</button>
+          <button
+            onClick={onToggleTheme}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            style={{
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--glass-border)',
+              borderRadius: '8px',
+              width: '32px',
+              height: '32px',
+              cursor: 'pointer',
+              color: 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {theme === 'dark' ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+            )}
+          </button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, fontFamily: 'Inter, sans-serif', fontSize: '0.9rem', color: 'var(--text-secondary)' }} onClick={onLoginClick}>Sign In</button>
           <button className="btn btn-primary" onClick={onLoginClick}>Get Started</button>
         </div>
       </nav>
 
       {/* Hero Section */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '6rem', paddingBottom: '4rem' }} className="fade-in">
-        <div style={{ textAlign: 'center', maxWidth: '800px', padding: '0 2rem' }}>
-          <h1 className="text-gradient" style={{ fontSize: '4.5rem', marginBottom: '1.5rem' }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }} className="fade-in">
+        <div style={{ textAlign: 'center', maxWidth: '800px', padding: '0 2rem', paddingTop: '6rem' }}>
+          <h1 className="text-gradient" style={{ fontSize: '4.5rem', marginBottom: '1.5rem', lineHeight: 1.05 }}>
             Manage Real Estate<br/>with Unfair Advantage.
           </h1>
-          <p style={{ fontSize: '1.25rem', color: 'var(--text-secondary)', maxWidth: '600px', margin: '0 auto', marginBottom: '3rem' }}>
+          <p style={{ fontSize: '1.2rem', color: 'var(--text-secondary)', maxWidth: '600px', margin: '0 auto', marginBottom: '2.5rem', lineHeight: 1.7 }}>
             AI-driven insights, live market tracking, and automated property management—all in one incredibly fast platform.
           </p>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
@@ -50,10 +85,69 @@ const Home: React.FC<Props> = ({ onLoginClick }) => {
           </div>
         </div>
 
+        {/* Social Proof Metrics Bar (B6) */}
+        <div className="social-proof-bar" style={{ width: '100%', maxWidth: '900px', marginTop: '4rem' }}>
+          <div className="social-proof-item scroll-reveal">
+            <div className="social-proof-value">$2.4B+</div>
+            <div className="social-proof-label">Assets Managed</div>
+          </div>
+          <div className="social-proof-item scroll-reveal">
+            <div className="social-proof-value">12,000+</div>
+            <div className="social-proof-label">Properties Tracked</div>
+          </div>
+          <div className="social-proof-item scroll-reveal">
+            <div className="social-proof-value">98.7%</div>
+            <div className="social-proof-label">Uptime SLA</div>
+          </div>
+          <div className="social-proof-item scroll-reveal">
+            <div className="social-proof-value">4.9★</div>
+            <div className="social-proof-label">User Rating</div>
+          </div>
+        </div>
+
+        {/* Features Section (B6) */}
+        <div className="features-section">
+          <div className="features-section-header">
+            <h2>Everything you need to scale</h2>
+            <p style={{ maxWidth: '500px', margin: '0 auto', fontSize: '1.05rem' }}>
+              Purpose-built tools for modern real estate portfolio management with Elara.
+            </p>
+          </div>
+          <div className="features-grid">
+            <div className="feature-card scroll-reveal">
+              <div className="feature-card-icon" style={{ background: 'rgba(59, 130, 246, 0.1)', color: 'var(--accent-blue)' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+              </div>
+              <h3>AI-Powered Analytics</h3>
+              <p>Machine learning models analyze market trends, predict rental yields, and surface opportunities before your competitors.</p>
+            </div>
+            <div className="feature-card scroll-reveal">
+              <div className="feature-card-icon" style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'var(--success)' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                </svg>
+              </div>
+              <h3>Real-Time Tracking</h3>
+              <p>Monitor occupancy rates, cash flows, and maintenance requests across your entire portfolio from a single dashboard.</p>
+            </div>
+            <div className="feature-card scroll-reveal">
+              <div className="feature-card-icon" style={{ background: 'rgba(147, 51, 234, 0.1)', color: 'var(--accent-purple)' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+              </div>
+              <h3>Bank-Grade Security</h3>
+              <p>End-to-end encryption, SOC 2 compliance, and role-based access control protect your most sensitive financial data.</p>
+            </div>
+          </div>
+        </div>
+
         {/* Demo UI Preview */}
-        <div style={{ marginTop: '5rem', width: '100%', maxWidth: '1100px', padding: '0 2rem', perspective: '1000px' }}>
-          <div className="glass-panel" style={{ 
-            transform: 'rotateX(5deg) scale(0.95)', 
+        <div style={{ width: '100%', maxWidth: '1100px', padding: '0 2rem', perspective: '1000px', marginBottom: '5rem' }}>
+          <div className="glass-panel" style={{
+            transform: 'rotateX(5deg) scale(0.95)',
             boxShadow: '0 24px 64px rgba(0,0,0,0.1)',
             padding: '2rem'
           }}>
@@ -93,7 +187,7 @@ const Home: React.FC<Props> = ({ onLoginClick }) => {
       </main>
 
       <footer style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.875rem', borderTop: '1px solid var(--glass-border)' }}>
-        © 2026 RE Portfolio. All rights reserved.
+        © 2026 Elara. All rights reserved.
       </footer>
     </div>
   );

@@ -1,4 +1,4 @@
-# Project: Real Estate Portfolio Manager (Clerk Auth & RapidAPI)
+# Project: Elara (Clerk Auth & RapidAPI)
 
 ## Architecture
 - **Vite/React Frontend**: Coordinates user views (Dashboard, Properties, Tenants, Transactions, Financials). Employs Clerk Authentication components (`ClerkProvider`, custom or standard Clerk gates) to enforce that only authenticated users can access views. Communicates with FastAPI backend using a JWT Bearer token via a custom `authFetch` wrapper.

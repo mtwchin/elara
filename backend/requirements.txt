@@ -1,9 +1,11 @@
 sqlalchemy
 fastapi
 uvicorn
-google-antigravity
+anthropic
 pyjwt
 bcrypt
 python-multipart
 email-validator
 cryptography
+httpx
+aiofiles

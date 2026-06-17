@@ -1,4 +1,4 @@
-# Real Estate Portfolio Manager
+# Elara
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy + SQLite — `cd backend && source venv/bin/activate && uvicorn main:app --reload`

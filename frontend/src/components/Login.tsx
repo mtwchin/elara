@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { login, register } from '../auth';
+import elaraLogo from '../assets/elara.jpg';
 
 interface Props {
   onAuthed: () => void;
+  onBack?: () => void;
 }
 
-const Login: React.FC<Props> = ({ onAuthed }) => {
+const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('demo@example.com');
   const [password, setPassword] = useState('demo1234');
@@ -36,6 +38,15 @@ const Login: React.FC<Props> = ({ onAuthed }) => {
       padding: '2rem',
     }}>
       <div className="glass-panel fade-in" style={{ width: '100%', maxWidth: 420, padding: '2.5rem' }}>
+        {onBack && (
+          <button
+            onClick={onBack}
+            style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', cursor: 'pointer', padding: 0, fontSize: '0.9rem', marginBottom: '1.25rem', display: 'block' }}
+          >
+            ← Back to Home
+          </button>
+        )}
+        <img src={elaraLogo} alt="Elara" style={{ width: '40px', height: '40px', borderRadius: '10px', objectFit: 'cover', marginBottom: '1.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', display: 'block' }} />
         <h1 className="text-gradient" style={{ margin: 0, marginBottom: '0.5rem' }}>
           {mode === 'login' ? 'Sign In' : 'Create Account'}
         </h1>

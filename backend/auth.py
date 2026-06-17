@@ -75,20 +75,29 @@ def get_current_user(
     )
     if not token:
         raise creds_exc
-    try:
-        # Inspect headers to check alg
-        unverified_header = jwt.get_unverified_header(token)
-        if unverified_header.get("alg") != "RS256":
-            raise creds_exc
 
+    # Try local HS256 token first (issued by /api/auth/login and /api/auth/register)
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+        if unverified_header.get("alg") == JWT_ALGORITHM:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            email = payload.get("email")
+            if not email:
+                raise creds_exc
+            user = db.query(User).filter(User.email == email).first()
+            if not user:
+                raise creds_exc
+            return user
+    except jwt.PyJWTError:
+        raise creds_exc
+
+    # Fall back to Clerk RS256 token if JWKS URL is configured
+    try:
         jwks_client = get_jwks_client()
         if not jwks_client:
             raise creds_exc
 
-        # Retrieve the public key matching kid
         signing_key = jwks_client.get_signing_key_from_jwt(token)
-
-        # Decode and verify the token
         payload = jwt.decode(
             token,
             signing_key.key,
@@ -104,10 +113,8 @@ def get_current_user(
     if not email:
         raise creds_exc
 
-    # Look up user locally by email
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        # Just-in-Time (JIT) Provisioning
         import secrets
         dummy_password = secrets.token_hex(32)
         user = User(email=email, hashed_password=hash_password(dummy_password))
