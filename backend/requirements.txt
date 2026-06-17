@@ -1,0 +1,9 @@
+sqlalchemy
+fastapi
+uvicorn
+google-antigravity
+pyjwt
+bcrypt
+python-multipart
+email-validator
+cryptography
