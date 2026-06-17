@@ -30,3 +30,5 @@ Elara is a comprehensive real estate portfolio management system featuring a Vit
 - [PROJECT.md](./PROJECT.md) - Project overview and milestones.
 - [TEST_INFRA.md](./TEST_INFRA.md) - Testing strategy and infrastructure.
 - [TEST_READY.md](./TEST_READY.md) - E2E test scenarios and requirements.
+# Contributors
+- Isaac
