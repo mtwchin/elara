@@ -36,25 +36,56 @@ from auth import (
 
 app = FastAPI(title="Elara API")
 
-@app.middleware("http")
-async def debug_logging(request, call_next):
-    print(f"DEBUG: {request.method} {request.url}")
-    # print(f"DEBUG: Headers: {dict(request.headers)}")
-    try:
-        response = await call_next(request)
-        print(f"DEBUG: Response {response.status_code}")
-        return response
-    except Exception as e:
-        print(f"DEBUG: Exception: {e}")
-        raise
+# Per-request debug logging — opt-in via DEBUG_HTTP to avoid noisy/leaky logs
+# in production. Set DEBUG_HTTP=1 locally to trace requests.
+if os.environ.get("DEBUG_HTTP"):
+    @app.middleware("http")
+    async def debug_logging(request, call_next):
+        print(f"DEBUG: {request.method} {request.url}")
+        try:
+            response = await call_next(request)
+            print(f"DEBUG: Response {response.status_code}")
+            return response
+        except Exception as e:
+            print(f"DEBUG: Exception: {e}")
+            raise
+
+# CORS — configurable allowlist. Set CORS_ORIGINS to a comma-separated list of
+# origins (e.g. "https://app.example.com,https://example.com"). Defaults to the
+# local dev origins. Using an explicit allowlist (not "*") keeps
+# allow_credentials valid and avoids exposing the API to arbitrary origins.
+_default_origins = "http://localhost:5173,http://localhost,http://127.0.0.1:5173,http://localhost:8000"
+CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", _default_origins).split(",") if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _log_env_diagnostics():
+    """Log which optional integrations are configured (warn, never crash)."""
+    ai = "enabled" if os.environ.get("GOOGLE_API_KEY") else "DISABLED (set GOOGLE_API_KEY)"
+    market = "enabled" if os.environ.get("RAPIDAPI_KEY") else "DISABLED (set RAPIDAPI_KEY)"
+    print(f"[startup] Elara API ready — AI: {ai}; Market data: {market}")
+    print(f"[startup] CORS origins: {CORS_ORIGINS}")
+
+
+@app.get("/api/health")
+async def health_check():
+    """Unauthenticated liveness/readiness probe for deploy + uptime checks."""
+    return {
+        "status": "ok",
+        "ai_enabled": bool(os.environ.get("GOOGLE_API_KEY")),
+        "market_data_enabled": bool(os.environ.get("RAPIDAPI_KEY")),
+        "time": datetime.datetime.utcnow().isoformat() + "Z",
+    }
 
 # ---------------------------------------------------------------------------
 # Upload directory
@@ -1002,17 +1033,35 @@ class RenewalLetterRequest(BaseModel):
     tenant_id: int
 
 
+def _ai_error_to_http(result: dict) -> None:
+    """Translate an agent error dict into an HTTPException.
+
+    Missing/uninstalled AI credentials are a configuration issue (503,
+    service unavailable); anything else is treated as a server error (500).
+    """
+    msg = result.get("error", "AI request failed")
+    if "GOOGLE_API_KEY" in msg or "not installed" in msg or "not set" in msg:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AI service unavailable: " + msg +
+                " Set GOOGLE_API_KEY and restart the server to enable this feature."
+            ),
+        )
+    raise HTTPException(status_code=500, detail=msg)
+
+
 @app.post("/api/agents/renewal-letter")
 async def renewal_letter(
     body: RenewalLetterRequest,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Draft a lease renewal letter using Claude.
+    """Draft a lease renewal letter using Gemini.
 
     Fetches market rent from Zillow for the property city (falls back to
     current rent +3% if Zillow is unavailable or RAPIDAPI_KEY is unset).
-    Returns 503 when ANTHROPIC_API_KEY is missing.
+    Returns 503 when GOOGLE_API_KEY is missing.
     """
     tenant = db.query(Tenant).filter(Tenant.id == body.tenant_id).first()
     if not tenant:
@@ -1032,16 +1081,7 @@ async def renewal_letter(
     result = draft_renewal_letter(body.tenant_id, db, market_rent=market_rent)
 
     if "error" in result:
-        error_msg = result["error"]
-        if "ANTHROPIC_API_KEY" in error_msg or "not installed" in error_msg:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "AI service unavailable: " + error_msg +
-                    " Set ANTHROPIC_API_KEY and restart the server to enable this feature."
-                ),
-            )
-        raise HTTPException(status_code=500, detail=error_msg)
+        _ai_error_to_http(result)
 
     return result
 
@@ -1051,17 +1091,11 @@ async def portfolio_advice(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Get high-level portfolio strategic advice from Claude."""
+    """Get high-level portfolio strategic advice from Gemini."""
     result = get_portfolio_advice(db)
 
     if "error" in result:
-        error_msg = result["error"]
-        if "ANTHROPIC_API_KEY" in error_msg or "not installed" in error_msg:
-            raise HTTPException(
-                status_code=503,
-                detail=error_msg
-            )
-        raise HTTPException(status_code=500, detail=error_msg)
+        _ai_error_to_http(result)
 
     return result
 
@@ -2159,7 +2193,7 @@ async def score_deal(
         lambda: orchestrator.score_deal(body.model_dump()),
     )
     if "error" in result and result.get("grade") not in ("A", "B", "C", "D", "N/A"):
-        raise HTTPException(status_code=503, detail=result["error"])
+        _ai_error_to_http(result)
     return result
 
 
@@ -2212,7 +2246,7 @@ async def lease_renewal_workflow(
         ),
     )
     if "error" in result:
-        raise HTTPException(status_code=503, detail=result["error"])
+        _ai_error_to_http(result)
     return result
 
 
