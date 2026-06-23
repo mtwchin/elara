@@ -1,4 +1,5 @@
 import React from 'react';
+import { Sun, Moon } from 'lucide-react';
 import type { Theme } from '../theme';
 import elaraLogo from '../assets/elara.jpg';
 
@@ -153,19 +154,7 @@ const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
               flexShrink: 0,
             }}
           >
-            {theme === 'dark' ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="5"/>
-                <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-                <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-              </svg>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-              </svg>
-            )}
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </button>
           <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, fontFamily: 'Inter, sans-serif', fontSize: '0.9rem', color: 'var(--text-secondary)' }} onClick={onLoginClick}>Sign In</button>
           <button className="btn btn-primary" onClick={onLoginClick}>Get Started</button>
@@ -188,7 +177,7 @@ const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
             AI-driven insights, live market tracking, professional financial tools, and automated portfolio management — all in one incredibly fast platform.
           </p>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button className="btn btn-primary" style={{ padding: '0.75rem 2rem', fontSize: '1.05rem' }} onClick={onLoginClick}>
+            <button className="btn btn-accent" style={{ padding: '0.75rem 2rem', fontSize: '1.05rem' }} onClick={onLoginClick}>
               Create Workspace
             </button>
             <button className="btn" style={{ padding: '0.75rem 2rem', fontSize: '1.05rem' }} onClick={onLoginClick}>

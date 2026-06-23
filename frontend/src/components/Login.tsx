@@ -35,7 +35,7 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
         {onBack && (
           <button
             onClick={onBack}
-            style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', cursor: 'pointer', padding: 0, fontSize: '0.9rem', marginBottom: '1.25rem', display: 'block' }}
+            style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0, fontSize: '0.9rem', marginBottom: '1.25rem', display: 'block' }}
           >
             ← Back to Home
           </button>
@@ -57,7 +57,7 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              style={{ padding: '0.6rem', borderRadius: 6, background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)' }}
+              className="form-input"
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -69,7 +69,7 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
               required
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               minLength={6}
-              style={{ padding: '0.6rem', borderRadius: 6, background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)' }}
+              className="form-input"
             />
           </div>
 
@@ -84,14 +84,14 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
           {mode === 'login' ? (
             <>
               Need an account?{' '}
-              <button onClick={() => { setMode('register'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', cursor: 'pointer', padding: 0 }}>
+              <button onClick={() => { setMode('register'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
                 Register
               </button>
             </>
           ) : (
             <>
               Already registered?{' '}
-              <button onClick={() => { setMode('login'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', cursor: 'pointer', padding: 0 }}>
+              <button onClick={() => { setMode('login'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
                 Sign in
               </button>
             </>
