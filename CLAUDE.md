@@ -9,7 +9,7 @@
 - **Docker**: `docker compose up --build` — builds backend + frontend, serves on ports 8000 and 80
 - **Testing**: pytest E2E suite at `tests/e2e/` (35 tests across 5 tiers, all expect real auth + market data)
 
-## Current State (2026-06-17, Sprint 3 shipped)
+## Current State (2026-06-23, Sprint 6 shipped)
 - **Backend**: Fully functional. All CRUD routes wired, auth works, AI endpoints call Gemini.
 - **Frontend**: Hits real backend at `http://localhost:8000` (or `VITE_API_URL` in prod). No mock interceptor.
 - **Auth**: `login()` and `register()` hit `/api/auth/login-json` and `/api/auth/register`. JWT stored in localStorage.
@@ -18,6 +18,7 @@
 - **Sprint 3**: Swapped Anthropic → Gemini, fixed import bug, seeded DB, Dockerized, production env config.
 - **Sprint 4** (2026-06-23): Agent orchestration (BaseAgent, 8 agent classes, AgentOrchestrator); new API routes (`/api/agents/*`, `/api/tenant-portal/me`); Maintenance.tsx and TenantPortal.tsx components; Dashboard health check; Transactions auto-categorize; Tools deal scorer; Calendar renewal workflow; shared `types.ts`; ErrorBoundary; CORS hardening; debug logging gated; `/api/health` probe.
 - **Sprint 5** (2026-06-23): Pagination on list endpoints (skip/limit wrapper); `/api/transactions/export.csv`; property image upload/serve (`/api/properties/{id}/image`); document viewer modal in Transactions; CSV export button in Transactions UI.
+- **Sprint 6** (2026-06-23): Brand identity + UI/UX polish — Indigo & Gold palette (`#4F46E5` primary, `#D4A537` gold accent, `#312E81` deep); dark theme indigo-tinted surfaces; `.btn-primary` rebrand to indigo gradient, `.btn-accent` gold; lucide-react icons across nav/actions/empty states; sonner toasts replacing all `window.alert()`/`window.confirm()` (0 remaining); reusable `Modal`+`ConfirmDialog` components; recharts BarCharts on Dashboard and Financials; Spinner component; mobile `@media` breakpoints (nav scroll, header stack, table overflow); refined glassmorphism with brand-tinted shadows/borders.
 
 ## Key Files
 - `backend/main.py` — all API routes (prefix: `/api/`)
@@ -47,10 +48,14 @@
 
 ## Design System
 - **Fonts**: EB Garamond (display headings), Inter (UI body text)
-- **Theme**: Light mode only (white backgrounds, dark text, glass panels)
-- **Buttons**: `.btn` (white/subtle), `.btn-primary` (dark gradient, white text)
-- **Panels**: `.glass-panel` (white glass, blur, 16px radius, hover lift)
-- **Colors**: `--bg-primary: #f9fafb`, `--text-primary: #111827`, `--accent-purple: #9333ea`
+- **Theme**: Light + Dark mode toggle (stored in localStorage, applied via `html[data-theme="dark"]`)
+- **Buttons**: `.btn` (white/subtle), `.btn-primary` (indigo gradient), `.btn-accent` (gold gradient for CTAs)
+- **Panels**: `.glass-panel` (white/dark glass, blur, 16px radius, brand-tinted shadow + hover lift)
+- **Brand tokens**: `--brand-primary: #4F46E5`, `--brand-deep: #312E81`, `--brand-accent: #D4A537`
+- **Icons**: lucide-react (size 15–18, consistent stroke)
+- **Toasts**: sonner (`notify.success/error/info/warning` via `src/toast.ts`)
+- **Charts**: recharts (`BarChart`, `ResponsiveContainer`) — indigo revenue bars, gold expense bars
+- **Modals**: `src/components/ui/Modal.tsx` (Esc-to-close, click-outside, focus on open); `ConfirmDialog.tsx` wraps it for delete confirmations
 
 ## Conventions
 - All API routes prefixed `/api/`, agent routes at `/api/agents/<name>`
@@ -96,12 +101,10 @@ VITE_API_URL=http://localhost:8000 docker compose up --build
 2. **Frontend** → Vercel, root = `./frontend`, set `VITE_API_URL` = Railway backend URL
 
 ## Remaining Work (Priority Order)
-1. Push local commits to GitHub (PAT needs `Contents: write` scope — current PAT is read-only)
-2. Run E2E test suite: `cd tests && pytest e2e/ -v` and fix failures for new paginated responses
-3. Wire Clerk auth end-to-end (optional — local JWT works fine for v1)
-4. RapidAPI/Zillow integration (optional — fallback heuristic already works)
-5. Real-time maintenance status notifications (WebSocket or SSE)
-6. Mobile responsiveness audit
+1. Run E2E test suite: `cd tests && pytest e2e/ -v` and fix failures for new paginated responses
+2. Wire Clerk auth end-to-end (optional — local JWT works fine for v1)
+3. RapidAPI/Zillow integration (optional — fallback heuristic already works)
+4. Real-time maintenance status notifications (WebSocket or SSE)
 
 ## See Also
 - `HANDOFF.md` — Comprehensive project handoff documentation
