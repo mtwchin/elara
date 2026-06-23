@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AlertTriangle, Info, XCircle, CheckCircle, Sparkles } from 'lucide-react';
 import { authFetch } from '../auth';
+import { notify } from '../toast';
 
 interface DashboardData {
   metrics: {
@@ -29,6 +32,38 @@ interface HealthCheckResult {
   portfolio_advice: string;
   lease_warnings: { title: string; description: string }[];
   generated_at: string;
+}
+
+const ALERT_ICONS: Record<string, React.ReactNode> = {
+  warning: <AlertTriangle size={20} />,
+  info: <Info size={20} />,
+  danger: <XCircle size={20} />,
+  success: <CheckCircle size={20} />,
+};
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: { value: number; name: string; color: string }[];
+  label?: string;
+}
+
+function ChartTooltip({ active, payload, label }: CustomTooltipProps) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)',
+      borderRadius: '10px', padding: '0.75rem 1rem', fontSize: '0.85rem',
+      boxShadow: 'var(--glass-shadow)',
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--text-primary)' }}>{label}</div>
+      {payload.map((p) => (
+        <div key={p.name} style={{ color: p.color, display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: 'inline-block' }} />
+          {p.name}: ${p.value.toLocaleString()}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const Dashboard: React.FC = () => {
@@ -61,8 +96,11 @@ const Dashboard: React.FC = () => {
         throw new Error(err.detail || 'Health check failed');
       }
       setHealthCheck(await res.json());
+      notify.success('Health check complete');
     } catch (e: unknown) {
-      setHealthError(e instanceof Error ? e.message : 'Unknown error');
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      setHealthError(msg);
+      notify.error('Health check failed: ' + msg);
     } finally {
       setHealthLoading(false);
     }
@@ -71,9 +109,7 @@ const Dashboard: React.FC = () => {
   if (loading) {
     return (
       <div className="app-container">
-        <div className="loading-container fade-in">
-          Loading Portfolio...
-        </div>
+        <div className="loading-container fade-in">Loading Portfolio...</div>
       </div>
     );
   }
@@ -121,7 +157,9 @@ const Dashboard: React.FC = () => {
             className="btn btn-primary"
             disabled={healthLoading}
             onClick={handleHealthCheck}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
           >
+            <Sparkles size={15} />
             {healthLoading ? 'Analyzing…' : 'Run Health Check'}
           </button>
         </div>
@@ -141,7 +179,7 @@ const Dashboard: React.FC = () => {
             <button className="btn" style={{ fontSize: '0.8rem' }} onClick={() => setHealthCheck(null)}>Dismiss</button>
           </div>
 
-          <blockquote style={{ borderLeft: '3px solid var(--accent-purple)', paddingLeft: '1rem', color: 'var(--text-primary)', fontStyle: 'normal', margin: '0 0 1.25rem 0', lineHeight: 1.6 }}>
+          <blockquote style={{ borderLeft: '3px solid var(--brand-primary)', paddingLeft: '1rem', color: 'var(--text-primary)', fontStyle: 'normal', margin: '0 0 1.25rem 0', lineHeight: 1.6 }}>
             {healthCheck.executive_summary}
           </blockquote>
 
@@ -167,9 +205,7 @@ const Dashboard: React.FC = () => {
               </summary>
               <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                 {healthCheck.lease_warnings.map((w, i) => (
-                  <li key={i} style={{ fontSize: '0.88rem', color: 'var(--warning)' }}>
-                    {w.description}
-                  </li>
+                  <li key={i} style={{ fontSize: '0.88rem', color: 'var(--warning)' }}>{w.description}</li>
                 ))}
               </ul>
             </details>
@@ -177,23 +213,20 @@ const Dashboard: React.FC = () => {
 
           {healthCheck.portfolio_advice && (
             <details>
-              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: '0.4rem 0' }}>
-                Strategic Advice
-              </summary>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: '0.4rem 0' }}>Strategic Advice</summary>
               <p style={{ marginTop: '0.5rem', fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
                 {healthCheck.portfolio_advice}
               </p>
             </details>
           )}
 
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '1rem' }}>
             Generated {new Date(healthCheck.generated_at).toLocaleString()}
           </div>
         </div>
       )}
 
       <div className="dashboard-grid">
-        {/* Metrics Cards */}
         <div className="glass-panel metric-card stagger-enter">
           <div className="metric-label">Total Portfolio Value</div>
           <div className="metric-value">${metrics.totalPortfolioValue.toLocaleString()}</div>
@@ -212,42 +245,35 @@ const Dashboard: React.FC = () => {
           <div className="metric-value">{metrics.occupancyRate.toFixed(1)}%</div>
         </div>
 
-        {/* Main Chart Area */}
+        {/* Recharts bar chart */}
         <div className="glass-panel main-chart stagger-enter" style={{ animationDelay: '0.33s' }}>
           <h2>Revenue vs Expenses</h2>
           <p>Year-to-date performance across all properties.</p>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
-            <div className="chart-legend">
-              <div className="chart-legend-item">
-                <div className="chart-legend-dot" style={{ background: 'var(--chart-revenue)' }}></div>
-                Revenue
-              </div>
-              <div className="chart-legend-item">
-                <div className="chart-legend-dot" style={{ background: 'var(--chart-expenses)' }}></div>
-                Expenses
-              </div>
+          <div style={{ marginTop: '1.5rem', height: 260 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} barCategoryGap="30%" barGap={4}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                  tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                  axisLine={false} tickLine={false} width={50}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(79,70,229,0.04)' }} />
+                <Bar dataKey="revenue" name="Revenue" fill="var(--chart-revenue)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="expenses" name="Expenses" fill="var(--chart-expenses)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="chart-legend" style={{ marginTop: '0.75rem' }}>
+            <div className="chart-legend-item">
+              <div className="chart-legend-dot" style={{ background: 'var(--chart-revenue)' }} />
+              Revenue
             </div>
-          </div>
-          <div style={{
-            height: '230px',
-            marginTop: '1.5rem',
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: '2%',
-            padding: '1rem 0',
-            borderBottom: '1px solid var(--glass-border)'
-          }}>
-            {chartData.map((d, i) => (
-              <div key={i} style={{ flex: 1, display: 'flex', gap: '4px', height: '100%', alignItems: 'flex-end' }}>
-                <div className="chart-bar-revenue" style={{ height: `${d.revenue}%` }}></div>
-                <div className="chart-bar-expenses" style={{ height: `${d.expenses}%` }}></div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 500 }}>
-            {chartData.map((d, i) => (
-              <span key={i}>{d.month}</span>
-            ))}
+            <div className="chart-legend-item">
+              <div className="chart-legend-dot" style={{ background: 'var(--chart-expenses)' }} />
+              Expenses
+            </div>
           </div>
         </div>
 
@@ -255,15 +281,11 @@ const Dashboard: React.FC = () => {
         <div className="glass-panel agent-alerts stagger-enter" style={{ animationDelay: '0.4s' }}>
           <h2>Agent Alerts</h2>
           <p>AI-driven insights and required actions.</p>
-
           <div className="alert-list">
             {alerts.map((alert) => (
               <div key={alert.id} className="alert-item">
                 <div className={`alert-icon ${alert.type}`}>
-                  {alert.type === 'warning' && '!'}
-                  {alert.type === 'info' && 'i'}
-                  {alert.type === 'danger' && '×'}
-                  {alert.type === 'success' && '✓'}
+                  {ALERT_ICONS[alert.type]}
                 </div>
                 <div className="alert-content">
                   <h4>{alert.title}</h4>
