@@ -16,6 +16,8 @@
 - **AI**: `agent.py` uses Google Gemini for renewal letters, portfolio advice, document extraction, maintenance alerts. Gracefully returns error dict when `GOOGLE_API_KEY` is absent.
 - **Seed data**: 3 properties, 3 tenants (one expiring, one leaving), 12 months of realistic transactions.
 - **Sprint 3**: Swapped Anthropic → Gemini, fixed import bug, seeded DB, Dockerized, production env config.
+- **Sprint 4** (2026-06-23): Agent orchestration (BaseAgent, 8 agent classes, AgentOrchestrator); new API routes (`/api/agents/*`, `/api/tenant-portal/me`); Maintenance.tsx and TenantPortal.tsx components; Dashboard health check; Transactions auto-categorize; Tools deal scorer; Calendar renewal workflow; shared `types.ts`; ErrorBoundary; CORS hardening; debug logging gated; `/api/health` probe.
+- **Sprint 5** (2026-06-23): Pagination on list endpoints (skip/limit wrapper); `/api/transactions/export.csv`; property image upload/serve (`/api/properties/{id}/image`); document viewer modal in Transactions; CSV export button in Transactions UI.
 
 ## Key Files
 - `backend/main.py` — all API routes (prefix: `/api/`)
@@ -94,11 +96,12 @@ VITE_API_URL=http://localhost:8000 docker compose up --build
 2. **Frontend** → Vercel, root = `./frontend`, set `VITE_API_URL` = Railway backend URL
 
 ## Remaining Work (Priority Order)
-1. Wire Calendar.tsx to backend (events from transactions/lease dates)
-2. Run E2E test suite: `cd tests && pytest e2e/ -v` and fix failures
+1. Push local commits to GitHub (PAT needs `Contents: write` scope — current PAT is read-only)
+2. Run E2E test suite: `cd tests && pytest e2e/ -v` and fix failures for new paginated responses
 3. Wire Clerk auth end-to-end (optional — local JWT works fine for v1)
 4. RapidAPI/Zillow integration (optional — fallback heuristic already works)
-5. Connect Deal Analyzer to live portfolio properties (pre-fill from selected property)
+5. Real-time maintenance status notifications (WebSocket or SSE)
+6. Mobile responsiveness audit
 
 ## See Also
 - `HANDOFF.md` — Comprehensive project handoff documentation
