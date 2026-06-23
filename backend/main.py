@@ -4,7 +4,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Property, Tenant, Transaction, User, Mortgage, Document
+from models import Property, Tenant, Transaction, User, Mortgage, Document, MaintenanceRequest
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any, List
 from collections import defaultdict
@@ -25,6 +25,7 @@ from agent import (
     extract_document_data,
     analyze_maintenance_health,
     get_portfolio_advice,
+    orchestrator,
 )
 from auth import (
     create_token,
@@ -80,6 +81,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+    account_type: Optional[str] = "admin"
 
 
 class LoginRequest(BaseModel):
@@ -91,6 +93,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     email: str
+    account_type: str = "admin"
 
 
 @app.post("/api/auth/register", response_model=TokenResponse)
@@ -101,11 +104,11 @@ async def register(req: RegisterRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
-    user = User(email=req.email, hashed_password=hash_password(req.password))
+    user = User(email=req.email, hashed_password=hash_password(req.password), account_type=req.account_type)
     db.add(user)
     db.commit()
     db.refresh(user)
-    return TokenResponse(access_token=create_token(user), email=user.email)
+    return TokenResponse(access_token=create_token(user), email=user.email, account_type=user.account_type)
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
@@ -119,7 +122,7 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    return TokenResponse(access_token=create_token(user), email=user.email)
+    return TokenResponse(access_token=create_token(user), email=user.email, account_type=user.account_type)
 
 
 @app.post("/api/auth/login-json", response_model=TokenResponse)
@@ -130,7 +133,7 @@ async def login_json(req: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    return TokenResponse(access_token=create_token(user), email=user.email)
+    return TokenResponse(access_token=create_token(user), email=user.email, account_type=user.account_type)
 
 
 @app.get("/api/auth/me")
@@ -706,12 +709,15 @@ def _serialize_tenant(t: Tenant, db: Session) -> dict:
         "email": t.email,
         "phone": t.phone,
         "propertyId": t.property_id,
+        "userId": t.user_id,
         "propertyAssigned": prop.address if prop else "Unassigned",
         "leaseStart": t.lease_start.isoformat() if t.lease_start else None,
         "leaseEnd": t.lease_end.isoformat() if t.lease_end else None,
         "rentAmount": t.rent_amount,
         "intent": t.intent or "Undecided",
         "daysUntilLeaseEnd": days_remaining,
+        "creditScore": t.credit_score,
+        "backgroundCheckStatus": t.background_check_status,
     }
 
 
@@ -741,6 +747,7 @@ class TenantCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     property_id: int
+    user_id: Optional[int] = None
     lease_start: Optional[datetime.date] = None
     lease_end: Optional[datetime.date] = None
     rent_amount: Optional[float] = None
@@ -752,6 +759,7 @@ class TenantUpdate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     property_id: Optional[int] = None
+    user_id: Optional[int] = None
     lease_start: Optional[datetime.date] = None
     lease_end: Optional[datetime.date] = None
     rent_amount: Optional[float] = None
@@ -772,6 +780,7 @@ async def create_tenant(
         email=body.email,
         phone=body.phone,
         property_id=body.property_id,
+        user_id=body.user_id,
         lease_start=body.lease_start,
         lease_end=body.lease_end,
         rent_amount=body.rent_amount,
@@ -804,6 +813,8 @@ async def update_tenant(
         if not prop:
             raise HTTPException(status_code=404, detail="Property not found")
         t.property_id = body.property_id
+    if body.user_id is not None:
+        t.user_id = body.user_id
     if body.lease_start is not None:
         t.lease_start = body.lease_start
     if body.lease_end is not None:
@@ -828,6 +839,154 @@ async def delete_tenant(
         raise HTTPException(status_code=404, detail="Tenant not found")
     db.delete(t)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Tenant Screening
+# ---------------------------------------------------------------------------
+
+@app.post("/api/tenants/{tenant_id}/screen")
+async def screen_tenant(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    import random
+    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    await asyncio.sleep(1) # simulate latency
+    score = random.randint(600, 800)
+    t.credit_score = score
+    t.background_check_status = "Passed"
+    db.commit()
+    db.refresh(t)
+    return _serialize_tenant(t, db)
+
+
+# ---------------------------------------------------------------------------
+# Maintenance Requests CRUD
+# ---------------------------------------------------------------------------
+
+class MaintenanceRequestCreate(BaseModel):
+    property_id: int
+    tenant_id: Optional[int] = None
+    title: str
+    description: str
+    status: Optional[str] = "Open"
+    priority: Optional[str] = "Normal"
+
+
+class MaintenanceRequestUpdate(BaseModel):
+    property_id: Optional[int] = None
+    tenant_id: Optional[int] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+
+
+def _serialize_maintenance(m: MaintenanceRequest) -> dict:
+    return {
+        "id": m.id,
+        "propertyId": m.property_id,
+        "tenantId": m.tenant_id,
+        "title": m.title,
+        "description": m.description,
+        "status": m.status,
+        "priority": m.priority,
+        "createdAt": m.created_at.isoformat() if m.created_at else None,
+    }
+
+
+@app.get("/api/maintenance")
+async def get_maintenance_requests(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    requests = db.query(MaintenanceRequest).all()
+    return [_serialize_maintenance(r) for r in requests]
+
+
+@app.post("/api/maintenance", status_code=201)
+async def create_maintenance_request(
+    body: MaintenanceRequestCreate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    req = MaintenanceRequest(
+        property_id=body.property_id,
+        tenant_id=body.tenant_id,
+        title=body.title,
+        description=body.description,
+        status=body.status or "Open",
+        priority=body.priority or "Normal",
+    )
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+    return _serialize_maintenance(req)
+
+
+@app.put("/api/maintenance/{request_id}")
+async def update_maintenance_request(
+    request_id: int,
+    body: MaintenanceRequestUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    req = db.query(MaintenanceRequest).filter(MaintenanceRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Maintenance request not found")
+    if body.property_id is not None:
+        req.property_id = body.property_id
+    if body.tenant_id is not None:
+        req.tenant_id = body.tenant_id
+    if body.title is not None:
+        req.title = body.title
+    if body.description is not None:
+        req.description = body.description
+    if body.status is not None:
+        req.status = body.status
+    if body.priority is not None:
+        req.priority = body.priority
+    db.commit()
+    db.refresh(req)
+    return _serialize_maintenance(req)
+
+
+# ---------------------------------------------------------------------------
+# Bank Sync
+# ---------------------------------------------------------------------------
+
+@app.post("/api/bank/sync")
+async def sync_bank(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    properties = db.query(Property).all()
+    if not properties:
+        return {"synced": 0, "message": "No properties found to sync rent"}
+    
+    import random
+    synced_count = 0
+    today = datetime.date.today()
+    for _ in range(random.randint(1, 3)):
+        prop = random.choice(properties)
+        tx = Transaction(
+            property_id=prop.id,
+            transaction_date=today,
+            amount=random.choice([1200.0, 1500.0, 2500.0, 3200.0]),
+            category="Rent",
+            type="income",
+            description="Mock Bank Sync - Rent Payment",
+            status="Paid"
+        )
+        db.add(tx)
+        synced_count += 1
+    db.commit()
+    return {"synced": synced_count, "message": f"Successfully synced {synced_count} mock transactions"}
 
 
 # ---------------------------------------------------------------------------
@@ -1935,7 +2094,172 @@ async def maintenance_health(
 
     Returns a list of alerts for expense categories that exceed 15% of
     gross income at the property level. Alert messages are generated by
-    Claude when ANTHROPIC_API_KEY is set; otherwise a template is used.
+    Gemini when GOOGLE_API_KEY is set; otherwise a template is used.
     """
     alerts = analyze_maintenance_health(db)
     return {"alerts": alerts, "count": len(alerts)}
+
+
+# ---------------------------------------------------------------------------
+# Orchestrated agent endpoints
+# ---------------------------------------------------------------------------
+
+class CategorizeTxRequest(BaseModel):
+    description: str
+    amount: Optional[float] = 0.0
+    property_id: Optional[int] = None
+
+
+@app.post("/api/agents/categorize-transaction")
+async def categorize_transaction(
+    body: CategorizeTxRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Use AI to classify a transaction description into a standard category."""
+    property_address = ""
+    if body.property_id:
+        prop = db.query(Property).filter(Property.id == body.property_id).first()
+        if prop:
+            property_address = prop.address or ""
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: orchestrator.categorize_transaction(
+            description=body.description,
+            amount=body.amount or 0.0,
+            property_address=property_address,
+        ),
+    )
+    return result
+
+
+class DealScoreRequest(BaseModel):
+    purchase_price: float
+    cap_rate: float
+    coc_return: float
+    annual_cash_flow: float
+    break_even_occupancy: float
+    noi: float
+    grm: float
+    down_payment: Optional[float] = None
+    loan_amount: Optional[float] = None
+
+
+@app.post("/api/agents/score-deal")
+async def score_deal(
+    body: DealScoreRequest,
+    _user: User = Depends(get_current_user),
+):
+    """Grade a real estate deal A–D with AI narrative analysis."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: orchestrator.score_deal(body.model_dump()),
+    )
+    if "error" in result and result.get("grade") not in ("A", "B", "C", "D", "N/A"):
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+@app.get("/api/agents/health-check")
+async def portfolio_health_check(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Full portfolio health check: chains maintenance + portfolio advice + lease alerts."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: orchestrator.run_portfolio_health_check(db=db),
+    )
+    return result
+
+
+class LeaseRenewalWorkflowRequest(BaseModel):
+    market_rent: Optional[float] = None
+
+
+@app.post("/api/agents/lease-renewal-workflow/{tenant_id}")
+async def lease_renewal_workflow(
+    tenant_id: int,
+    body: LeaseRenewalWorkflowRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Full lease renewal workflow: market data + letter + pricing timeline."""
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant {tenant_id} not found")
+
+    market_rent = body.market_rent
+    if not market_rent and tenant.property_id:
+        prop = db.query(Property).filter(Property.id == tenant.property_id).first()
+        if prop:
+            city = parse_city_from_address(prop.address)
+            dummy_alerts: list = []
+            market_data = await fetch_zillow_market_data(city, dummy_alerts)
+            zillow_rent = market_data.get("cityAverageRent")
+            if zillow_rent and zillow_rent > 0:
+                market_rent = float(zillow_rent)
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: orchestrator.run_lease_renewal_workflow(
+            tenant_id=tenant_id, db=db, market_rent=market_rent
+        ),
+    )
+    if "error" in result:
+        raise HTTPException(status_code=503, detail=result["error"])
+    return result
+
+
+class SuggestPriorityRequest(BaseModel):
+    title: str
+    description: str
+
+
+@app.post("/api/agents/suggest-priority")
+async def suggest_maintenance_priority(
+    body: SuggestPriorityRequest,
+    _user: User = Depends(get_current_user),
+):
+    """Use AI to suggest a priority level for a maintenance request."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: orchestrator.suggest_maintenance_priority(
+            title=body.title, description=body.description
+        ),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tenant Portal
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tenant-portal/me")
+async def tenant_portal_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the authenticated tenant's lease summary and maintenance requests."""
+    tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=404,
+            detail="No tenant record is linked to this account. Contact your property manager.",
+        )
+    maintenance = (
+        db.query(MaintenanceRequest)
+        .filter(MaintenanceRequest.tenant_id == tenant.id)
+        .order_by(MaintenanceRequest.created_at.desc())
+        .all()
+    )
+    return {
+        "tenant": _serialize_tenant(tenant, db),
+        "maintenanceRequests": [_serialize_maintenance(m) for m in maintenance],
+    }

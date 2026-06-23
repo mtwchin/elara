@@ -10,6 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    account_type = Column(String, default="admin")
 
 
 class Property(Base):
@@ -36,12 +37,31 @@ class Tenant(Base):
     email = Column(String)
     phone = Column(String)
     property_id = Column(Integer, ForeignKey("properties.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     lease_start = Column(Date)
     lease_end = Column(Date)
     rent_amount = Column(Float)
     intent = Column(String, default="Undecided")
+    credit_score = Column(Integer, nullable=True)
+    background_check_status = Column(String, nullable=True)
 
     property = relationship("Property", back_populates="tenants")
+
+
+class MaintenanceRequest(Base):
+    __tablename__ = "maintenance_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"))
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    title = Column(String)
+    description = Column(String)
+    status = Column(String, default="Open")
+    priority = Column(String, default="Normal")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    property = relationship("Property")
+    tenant = relationship("Tenant")
 
 
 class Transaction(Base):

@@ -46,6 +46,39 @@ function formatShortName(name: string): string {
   return `${parts[0]} ${parts[parts.length - 1][0]}.`;
 }
 
+interface RenewalWorkflowResult {
+  letter_text: string;
+  suggested_rent: number;
+  market_context: string;
+  days_until_expiry: number | null;
+  recommended_deadline: string | null;
+  pricing_strategy: string;
+  tenant_intent: string;
+}
+
+const overlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 1000,
+  background: 'rgba(0,0,0,0.4)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+const modalStyle: React.CSSProperties = {
+  background: 'var(--glass-bg)',
+  backdropFilter: 'blur(12px)',
+  borderRadius: '16px',
+  border: '1px solid var(--glass-border)',
+  padding: '2rem',
+  width: '100%',
+  maxWidth: '580px',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+  maxHeight: '90vh',
+  overflowY: 'auto',
+};
+
 const Calendar: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -56,6 +89,31 @@ const Calendar: React.FC = () => {
   const [month, setMonth] = useState(new Date().getMonth()); // 0-indexed
 
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+
+  const [renewalResult, setRenewalResult] = useState<RenewalWorkflowResult | null>(null);
+  const [renewalLoading, setRenewalLoading] = useState<number | null>(null);
+  const [renewalTenantName, setRenewalTenantName] = useState<string>('');
+
+  const handleRunRenewalWorkflow = async (tenant: Tenant) => {
+    setRenewalLoading(tenant.id);
+    setRenewalTenantName(tenant.name);
+    setRenewalResult(null);
+    try {
+      const res = await authFetch(`/api/agents/lease-renewal-workflow/${tenant.id}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Workflow failed' }));
+        throw new Error(err.detail || 'Workflow failed');
+      }
+      setRenewalResult(await res.json());
+    } catch (e: unknown) {
+      alert('Error: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    } finally {
+      setRenewalLoading(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -329,6 +387,55 @@ const Calendar: React.FC = () => {
         </div>
       )}
 
+      {/* Expiring Soon — AI Renewal Panel */}
+      {(() => {
+        const expiring = tenants.filter((t) => isExpiringSoon(t.leaseEnd));
+        if (expiring.length === 0) return null;
+        const propName = (id: number) =>
+          properties.find((p) => p.id === id)?.address || `Property ${id}`;
+        const daysLeft = (leaseEnd: string | null) => {
+          if (!leaseEnd) return null;
+          const diff = parseLocalDate(leaseEnd).getTime() - new Date().setHours(0,0,0,0);
+          return Math.max(0, Math.round(diff / (24 * 60 * 60 * 1000)));
+        };
+        return (
+          <div className="glass-panel-static" style={{ marginTop: '1.5rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--warning)' }}>
+              Leases Expiring Soon
+            </h3>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Tenant</th>
+                  <th>Property</th>
+                  <th>Days Left</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expiring.map((t) => (
+                  <tr key={t.id}>
+                    <td><strong>{t.name}</strong></td>
+                    <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{propName(t.propertyId)}</td>
+                    <td style={{ fontWeight: 600, color: 'var(--danger)' }}>{daysLeft(t.leaseEnd)} days</td>
+                    <td>
+                      <button
+                        className="btn btn-primary"
+                        style={{ padding: '0.3rem 0.8rem', fontSize: '0.82rem' }}
+                        disabled={renewalLoading === t.id}
+                        onClick={() => handleRunRenewalWorkflow(t)}
+                      >
+                        {renewalLoading === t.id ? 'Running…' : 'Renewal Workflow'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
       {/* Tooltip */}
       {tooltip && (
         <div
@@ -353,6 +460,64 @@ const Calendar: React.FC = () => {
           }}
         >
           {tooltip.text}
+        </div>
+      )}
+
+      {/* Renewal Workflow Modal */}
+      {renewalResult && (
+        <div style={overlayStyle} onClick={() => setRenewalResult(null)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>
+                Renewal Workflow — {renewalTenantName}
+              </h2>
+              <button className="btn" style={{ fontSize: '0.8rem' }} onClick={() => setRenewalResult(null)}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <div className="glass-panel-static">
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suggested Rent</div>
+                <div style={{ fontWeight: 700, fontSize: '1.2rem', marginTop: '0.25rem' }}>
+                  ${renewalResult.suggested_rent.toLocaleString()}/mo
+                </div>
+              </div>
+              <div className="glass-panel-static">
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Days Until Expiry</div>
+                <div style={{ fontWeight: 700, fontSize: '1.2rem', color: 'var(--danger)', marginTop: '0.25rem' }}>
+                  {renewalResult.days_until_expiry ?? '—'}
+                </div>
+              </div>
+            </div>
+
+            {renewalResult.pricing_strategy && (
+              <div style={{ marginBottom: '1rem', padding: '0.6rem 0.9rem', borderRadius: '8px', background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.2)', fontSize: '0.88rem', color: 'var(--text-primary)' }}>
+                <strong>Pricing:</strong> {renewalResult.pricing_strategy}
+              </div>
+            )}
+
+            {renewalResult.recommended_deadline && (
+              <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                <strong>Response deadline:</strong> {new Date(renewalResult.recommended_deadline).toLocaleDateString()}
+              </div>
+            )}
+
+            {renewalResult.market_context && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                {renewalResult.market_context}
+              </p>
+            )}
+
+            <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '1rem' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                Renewal Letter
+              </div>
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem', lineHeight: 1.7, fontFamily: 'Inter, sans-serif', margin: 0 }}>
+                {renewalResult.letter_text}
+              </pre>
+            </div>
+          </div>
         </div>
       )}
     </div>

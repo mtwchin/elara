@@ -23,10 +23,22 @@ interface DashboardData {
   }[];
 }
 
+interface HealthCheckResult {
+  executive_summary: string;
+  maintenance_alerts: { property: string; category: string; alert: string; severity: string }[];
+  portfolio_advice: string;
+  lease_warnings: { title: string; description: string }[];
+  generated_at: string;
+}
+
 const Dashboard: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [healthCheck, setHealthCheck] = useState<HealthCheckResult | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthError, setHealthError] = useState<string | null>(null);
 
   useEffect(() => {
     authFetch('/api/dashboard')
@@ -37,6 +49,24 @@ const Dashboard: React.FC = () => {
       .then((json: DashboardData) => { setData(json); setLoading(false); })
       .catch((err) => { console.error(err); setError(err.message); setLoading(false); });
   }, []);
+
+  const handleHealthCheck = async () => {
+    setHealthLoading(true);
+    setHealthError(null);
+    setHealthCheck(null);
+    try {
+      const res = await authFetch('/api/agents/health-check');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Health check failed' }));
+        throw new Error(err.detail || 'Health check failed');
+      }
+      setHealthCheck(await res.json());
+    } catch (e: unknown) {
+      setHealthError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setHealthLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -87,9 +117,80 @@ const Dashboard: React.FC = () => {
         </div>
         <div className="page-header-actions">
           <button className="btn">Export Report</button>
-          <button className="btn btn-primary">Add Property</button>
+          <button
+            className="btn btn-primary"
+            disabled={healthLoading}
+            onClick={handleHealthCheck}
+          >
+            {healthLoading ? 'Analyzing…' : 'Run Health Check'}
+          </button>
         </div>
       </div>
+
+      {healthError && (
+        <div className="glass-panel-static" style={{ marginBottom: '1.5rem', color: 'var(--danger)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Health check failed: {healthError}</span>
+          <button className="btn" style={{ fontSize: '0.8rem' }} onClick={() => setHealthError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {healthCheck && (
+        <div className="glass-panel" style={{ marginBottom: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Portfolio Health Check</h2>
+            <button className="btn" style={{ fontSize: '0.8rem' }} onClick={() => setHealthCheck(null)}>Dismiss</button>
+          </div>
+
+          <blockquote style={{ borderLeft: '3px solid var(--accent-purple)', paddingLeft: '1rem', color: 'var(--text-primary)', fontStyle: 'normal', margin: '0 0 1.25rem 0', lineHeight: 1.6 }}>
+            {healthCheck.executive_summary}
+          </blockquote>
+
+          {healthCheck.maintenance_alerts.length > 0 && (
+            <details style={{ marginBottom: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: '0.4rem 0' }}>
+                Maintenance Flags ({healthCheck.maintenance_alerts.length})
+              </summary>
+              <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                {healthCheck.maintenance_alerts.map((a, i) => (
+                  <li key={i} style={{ fontSize: '0.88rem', color: a.severity === 'danger' ? 'var(--danger)' : 'var(--warning)' }}>
+                    <strong>{a.property}</strong> — {a.alert}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {healthCheck.lease_warnings.length > 0 && (
+            <details style={{ marginBottom: '1rem' }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: '0.4rem 0' }}>
+                Lease Warnings ({healthCheck.lease_warnings.length})
+              </summary>
+              <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                {healthCheck.lease_warnings.map((w, i) => (
+                  <li key={i} style={{ fontSize: '0.88rem', color: 'var(--warning)' }}>
+                    {w.description}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {healthCheck.portfolio_advice && (
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: '0.4rem 0' }}>
+                Strategic Advice
+              </summary>
+              <p style={{ marginTop: '0.5rem', fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {healthCheck.portfolio_advice}
+              </p>
+            </details>
+          )}
+
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
+            Generated {new Date(healthCheck.generated_at).toLocaleString()}
+          </div>
+        </div>
+      )}
 
       <div className="dashboard-grid">
         {/* Metrics Cards */}
@@ -111,7 +212,7 @@ const Dashboard: React.FC = () => {
           <div className="metric-value">{metrics.occupancyRate.toFixed(1)}%</div>
         </div>
 
-        {/* Main Chart Area (B3: palette + legend) */}
+        {/* Main Chart Area */}
         <div className="glass-panel main-chart stagger-enter" style={{ animationDelay: '0.33s' }}>
           <h2>Revenue vs Expenses</h2>
           <p>Year-to-date performance across all properties.</p>

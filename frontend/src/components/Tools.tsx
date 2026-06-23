@@ -5,7 +5,7 @@ import { authFetch } from '../auth';
 // Types
 // ---------------------------------------------------------------------------
 
-type ToolId = 'deal' | 'mortgage' | 'proforma' | 'depreciation' | 'refi';
+type ToolId = 'deal' | 'mortgage' | 'proforma' | 'depreciation' | 'refi' | 'sellkeep';
 
 // ---------------------------------------------------------------------------
 // Utility helpers
@@ -46,6 +46,22 @@ interface DealInputs {
 interface DealAnalyzerProps {
   prefillPurchasePrice?: string;
 }
+
+interface DealScoreResult {
+  grade: 'A' | 'B' | 'C' | 'D' | 'N/A';
+  summary: string;
+  risks: string[];
+  strengths: string[];
+  generated_at: string;
+}
+
+const GRADE_COLOR: Record<string, string> = {
+  A: 'var(--success)',
+  B: 'var(--accent-blue)',
+  C: 'var(--warning)',
+  D: 'var(--danger)',
+  'N/A': 'var(--text-muted)',
+};
 
 function DealAnalyzer({ prefillPurchasePrice }: DealAnalyzerProps) {
   const [inputs, setInputs] = useState<DealInputs>({
@@ -93,6 +109,41 @@ function DealAnalyzer({ prefillPurchasePrice }: DealAnalyzerProps) {
 
     return { downPayment, loanAmount, monthlyDebt, effectiveRent, noi, capRate, annualCashFlow, cocReturn, grm, breakEvenOccupancy };
   }, [inputs]);
+
+  const [dealScore, setDealScore] = useState<DealScoreResult | null>(null);
+  const [scoring, setScoring] = useState(false);
+  const [scoreError, setScoreError] = useState<string | null>(null);
+
+  const handleScoreDeal = async () => {
+    setScoring(true);
+    setScoreError(null);
+    setDealScore(null);
+    try {
+      const res = await authFetch('/api/agents/score-deal', {
+        method: 'POST',
+        body: JSON.stringify({
+          purchase_price: parseFloat(inputs.purchasePrice) || 0,
+          cap_rate: r.capRate,
+          coc_return: r.cocReturn,
+          annual_cash_flow: r.annualCashFlow,
+          break_even_occupancy: r.breakEvenOccupancy,
+          noi: r.noi,
+          grm: r.grm,
+          down_payment: r.downPayment,
+          loan_amount: r.loanAmount,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Score failed' }));
+        throw new Error(err.detail || 'Score failed');
+      }
+      setDealScore(await res.json());
+    } catch (e: unknown) {
+      setScoreError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setScoring(false);
+    }
+  };
 
   return (
     <div className="tool-layout">
@@ -152,6 +203,73 @@ function DealAnalyzer({ prefillPurchasePrice }: DealAnalyzerProps) {
             At this occupancy your rent exactly covers debt service + expenses. Lower is safer.
           </p>
         </div>
+
+        <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          <button
+            className="btn btn-primary"
+            disabled={scoring}
+            onClick={handleScoreDeal}
+          >
+            {scoring ? 'Scoring…' : 'Score This Deal'}
+          </button>
+          {scoreError && (
+            <span style={{ fontSize: '0.85rem', color: 'var(--danger)' }}>{scoreError}</span>
+          )}
+        </div>
+
+        {dealScore && (
+          <div className="glass-panel-static" style={{ marginTop: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+              <div style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                background: GRADE_COLOR[dealScore.grade] || 'var(--text-muted)',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.6rem',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}>
+                {dealScore.grade}
+              </div>
+              <p style={{ lineHeight: 1.6, fontSize: '0.9rem', color: 'var(--text-primary)', margin: 0 }}>
+                {dealScore.summary}
+              </p>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              {dealScore.strengths.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--success)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                    Strengths
+                  </div>
+                  <ul style={{ paddingLeft: '1rem', margin: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    {dealScore.strengths.map((s, i) => (
+                      <li key={i} style={{ fontSize: '0.85rem' }}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {dealScore.risks.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
+                    Risks
+                  </div>
+                  <ul style={{ paddingLeft: '1rem', margin: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                    {dealScore.risks.map((r, i) => (
+                      <li key={i} style={{ fontSize: '0.85rem' }}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+              Generated {new Date(dealScore.generated_at).toLocaleString()}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -778,6 +896,95 @@ function ResultCard({ label, value, highlight, warning }: ResultCardProps) {
 }
 
 // ---------------------------------------------------------------------------
+// 6. Sell vs Keep Analysis
+// ---------------------------------------------------------------------------
+
+function SellKeepAnalysis() {
+  const [currentValue, setCurrentValue] = useState('500000');
+  const [mortgageBalance, setMortgageBalance] = useState('300000');
+  const [monthlyRent, setMonthlyRent] = useState('3000');
+  const [monthlyExpenses, setMonthlyExpenses] = useState('1500');
+  const [sellingCostsPct, setSellingCostsPct] = useState('8');
+  const [reinvestmentReturnPct, setReinvestmentReturnPct] = useState('7');
+
+  const val = parseFloat(currentValue) || 0;
+  const bal = parseFloat(mortgageBalance) || 0;
+  const rent = parseFloat(monthlyRent) || 0;
+  const exp = parseFloat(monthlyExpenses) || 0;
+  const sellPct = parseFloat(sellingCostsPct) || 0;
+  const reinvestPct = parseFloat(reinvestmentReturnPct) || 0;
+
+  const netCashFlowMonthly = rent - exp;
+  const netCashFlowYearly = netCashFlowMonthly * 12;
+
+  const sellingCosts = val * (sellPct / 100);
+  const netProceeds = val - bal - sellingCosts;
+
+  const reinvestmentYearly = netProceeds * (reinvestPct / 100);
+
+  return (
+    <div className="glass-panel-static">
+      <h2 style={{ marginBottom: '1rem' }}>Sell vs Keep Analysis</h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+        Compare the PNL of holding your property against selling it and reinvesting the net proceeds.
+      </p>
+
+      <div className="calculator-grid">
+        <div className="form-group">
+          <label className="form-label">Current Property Value ($)</label>
+          <input type="number" className="form-input" value={currentValue} onChange={(e) => setCurrentValue(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Remaining Mortgage Balance ($)</label>
+          <input type="number" className="form-input" value={mortgageBalance} onChange={(e) => setMortgageBalance(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Monthly Rent ($)</label>
+          <input type="number" className="form-input" value={monthlyRent} onChange={(e) => setMonthlyRent(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Monthly Expenses & Mortgage ($)</label>
+          <input type="number" className="form-input" value={monthlyExpenses} onChange={(e) => setMonthlyExpenses(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Selling Costs (%)</label>
+          <input type="number" className="form-input" value={sellingCostsPct} onChange={(e) => setSellingCostsPct(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Reinvestment Return (%)</label>
+          <input type="number" className="form-input" value={reinvestmentReturnPct} onChange={(e) => setReinvestmentReturnPct(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="results-panel" style={{ marginTop: '1.5rem' }}>
+        <h3 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Analysis Results</h3>
+        <div className="results-grid">
+          <div className="result-item">
+            <span className="result-label">Net Proceeds if Sold</span>
+            <span className="result-value">{fmtDollar(netProceeds)}</span>
+          </div>
+          <div className="result-item">
+            <span className="result-label">Yearly Cash Flow (Keep)</span>
+            <span className="result-value">{fmtDollar(netCashFlowYearly)}</span>
+          </div>
+          <div className="result-item">
+            <span className="result-label">Yearly Return (Reinvested)</span>
+            <span className="result-value">{fmtDollar(reinvestmentYearly)}</span>
+          </div>
+          <div className="result-item" style={{ gridColumn: '1 / -1' }}>
+            <div style={{ marginTop: '1rem', padding: '1rem', background: netCashFlowYearly > reinvestmentYearly ? 'rgba(46, 213, 115, 0.1)' : 'rgba(255, 71, 87, 0.1)', borderRadius: '8px' }}>
+              <strong>Conclusion:</strong> {netCashFlowYearly > reinvestmentYearly 
+                ? `Keeping the property generates ${fmtDollar(netCashFlowYearly - reinvestmentYearly)} MORE per year than selling and reinvesting at ${fmtPct(reinvestPct)}.`
+                : `Selling and reinvesting at ${fmtPct(reinvestPct)} generates ${fmtDollar(reinvestmentYearly - netCashFlowYearly)} MORE per year than keeping the property.`}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Tools Page
 // ---------------------------------------------------------------------------
 
@@ -918,6 +1125,7 @@ const Tools: React.FC = () => {
         {activeTool === 'proforma' && <ProFormaBuilder />}
         {activeTool === 'depreciation' && <DepreciationTracker />}
         {activeTool === 'refi' && <RefinanceAnalyzer />}
+        {activeTool === 'sellkeep' && <SellKeepAnalysis />}
       </div>
     </div>
   );

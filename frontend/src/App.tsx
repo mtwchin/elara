@@ -6,17 +6,20 @@ import Transactions from './components/Transactions';
 import Financials from './components/Financials';
 import Tools from './components/Tools';
 import Calendar from './components/Calendar';
+import Maintenance from './components/Maintenance';
+import TenantPortal from './components/TenantPortal';
 import Login from './components/Login';
 import Home from './components/Home';
-import { clearSession, getEmail, getToken } from './auth';
+import { clearSession, getEmail, getToken, getAccountType } from './auth';
 import { getStoredTheme, applyTheme } from './theme';
 import type { Theme } from './theme';
 import elaraLogo from './assets/elara.jpg';
 
-type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar';
+type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal';
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [accountType, setAccountType] = useState<string | null>(getAccountType());
+  const [currentView, setCurrentView] = useState<View>(() => getAccountType() === 'tenant' ? 'tenant-portal' : 'dashboard');
   const [authed, setAuthed] = useState<boolean>(!!getToken());
   const [email, setEmail] = useState<string | null>(getEmail());
   const [showLogin, setShowLogin] = useState<boolean>(false);
@@ -36,6 +39,7 @@ function App() {
     const handler = () => {
       setAuthed(false);
       setEmail(null);
+      setAccountType(null);
     };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
@@ -45,6 +49,7 @@ function App() {
     clearSession();
     setAuthed(false);
     setEmail(null);
+    setAccountType(null);
   };
 
   if (!authed) {
@@ -54,6 +59,9 @@ function App() {
           onAuthed={() => {
             setAuthed(true);
             setEmail(getEmail());
+            const accType = getAccountType();
+            setAccountType(accType);
+            setCurrentView(accType === 'tenant' ? 'tenant-portal' : 'dashboard');
             setShowLogin(false);
           }}
           onBack={() => setShowLogin(false)}
@@ -63,24 +71,31 @@ function App() {
     return <Home onLoginClick={() => setShowLogin(true)} theme={theme} onToggleTheme={toggleTheme} />;
   }
 
-  const navItems: { view: View; label: string }[] = [
+  const adminNavItems: { view: View; label: string }[] = [
     { view: 'dashboard', label: 'Dashboard' },
     { view: 'properties', label: 'Properties' },
     { view: 'tenants', label: 'Tenants' },
     { view: 'transactions', label: 'Transactions' },
     { view: 'financials', label: 'Financials' },
+    { view: 'maintenance', label: 'Maintenance' },
     { view: 'tools', label: 'Tools' },
     { view: 'calendar', label: 'Calendar' },
   ];
+
+  const tenantNavItems: { view: View; label: string }[] = [
+    { view: 'tenant-portal', label: 'Tenant Portal' },
+  ];
+
+  const navItems = accountType === 'tenant' ? tenantNavItems : adminNavItems;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', padding: '1rem' }}>
       <div className="app-nav-wrapper">
         <nav className="app-nav">
           <button
-            onClick={() => setCurrentView('dashboard')}
+            onClick={() => setCurrentView(accountType === 'tenant' ? 'tenant-portal' : 'dashboard')}
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-            aria-label="Go to dashboard"
+            aria-label="Go to home"
           >
             <img src={elaraLogo} alt="" style={{ width: '28px', height: '28px', borderRadius: '6px', objectFit: 'cover' }} />
             <h2 className="app-nav-brand text-gradient">Elara</h2>
@@ -140,6 +155,8 @@ function App() {
         {currentView === 'financials' && <Financials />}
         {currentView === 'tools' && <Tools />}
         {currentView === 'calendar' && <Calendar />}
+        {currentView === 'maintenance' && <Maintenance />}
+        {currentView === 'tenant-portal' && <TenantPortal />}
       </main>
     </div>
   );

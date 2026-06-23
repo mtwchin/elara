@@ -11,6 +11,7 @@ interface Transaction {
   amount: number;
   status: string;
   documentCount: number;
+  description: string | null;
 }
 
 interface PropertyOption {
@@ -31,8 +32,13 @@ const Transactions: React.FC = () => {
   const [type, setType] = useState('Income');
   const [category, setCategory] = useState('');
   const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
   const [status, setStatus] = useState('Paid');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const [categorizing, setCategorizing] = useState(false);
+  const [categorizeProgress, setCategorizeProgress] = useState<string | null>(null);
 
   const fetchTransactions = async () => {
     setLoading(true);
@@ -68,6 +74,7 @@ const Transactions: React.FC = () => {
       type,
       category,
       amount: parseFloat(amount),
+      description: description || null,
       status,
     };
 
@@ -79,7 +86,6 @@ const Transactions: React.FC = () => {
       if (!res.ok) throw new Error('Failed to add transaction');
       const created: Transaction = await res.json();
 
-      // Upload file if one was selected
       const file = fileInputRef.current?.files?.[0];
       if (file) {
         const formData = new FormData();
@@ -91,12 +97,12 @@ const Transactions: React.FC = () => {
         }
       }
 
-      // Reset form
       setDate('');
       setPropertyId('');
       setType('Income');
       setCategory('');
       setAmount('');
+      setDescription('');
       setStatus('Paid');
       if (fileInputRef.current) fileInputRef.current.value = '';
 
@@ -104,6 +110,67 @@ const Transactions: React.FC = () => {
     } catch (err: unknown) {
       alert('Error adding transaction: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
+  };
+
+  const handleSyncBank = async () => {
+    setSyncing(true);
+    try {
+      const res = await authFetch('/api/bank/sync', { method: 'POST' });
+      if (!res.ok) throw new Error('Failed to sync bank');
+      const data = await res.json();
+      alert(`Bank sync complete: ${data.message || 'New transactions loaded.'}`);
+      fetchTransactions();
+    } catch (err: unknown) {
+      alert('Error syncing bank: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleAutoCategorize = async () => {
+    const uncategorized = transactions.filter(
+      (tx) => !tx.category || tx.category === 'Other'
+    );
+    if (uncategorized.length === 0) {
+      alert('No uncategorized transactions found.');
+      return;
+    }
+
+    setCategorizing(true);
+    let updated = 0;
+
+    for (let i = 0; i < uncategorized.length; i++) {
+      const tx = uncategorized[i];
+      setCategorizeProgress(`Categorizing ${i + 1} of ${uncategorized.length}…`);
+
+      try {
+        const res = await authFetch('/api/agents/categorize-transaction', {
+          method: 'POST',
+          body: JSON.stringify({
+            description: tx.description || tx.category || '',
+            amount: tx.amount,
+            property_id: tx.propertyId,
+          }),
+        });
+        if (!res.ok) continue;
+        const result: { category: string; confidence: number; reasoning: string } = await res.json();
+
+        if (result.confidence > 0.6 && result.category && result.category !== 'Other') {
+          const putRes = await authFetch(`/api/transactions/${tx.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ category: result.category }),
+          });
+          if (putRes.ok) updated++;
+        }
+      } catch {
+        // non-fatal — continue to next
+      }
+    }
+
+    setCategorizing(false);
+    setCategorizeProgress(null);
+    alert(`Done. Updated ${updated} of ${uncategorized.length} transactions.`);
+    fetchTransactions();
   };
 
   if (loading && transactions.length === 0) {
@@ -136,7 +203,7 @@ const Transactions: React.FC = () => {
   };
 
   const filteredTransactions = transactions.filter((tx) =>
-    [tx.property, tx.category, tx.type, tx.status].some((v) =>
+    [tx.property, tx.category, tx.type, tx.status, tx.description].some((v) =>
       (v || '').toLowerCase().includes(search.toLowerCase())
     )
   );
@@ -149,6 +216,21 @@ const Transactions: React.FC = () => {
           <p>Ledger and financial records.</p>
         </div>
         <div className="page-header-actions">
+          <button
+            className="btn"
+            onClick={handleAutoCategorize}
+            disabled={categorizing}
+            title="Use AI to classify uncategorized transactions"
+          >
+            {categorizing ? (categorizeProgress || 'Categorizing…') : 'Auto-Categorize'}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={handleSyncBank}
+            disabled={syncing}
+          >
+            {syncing ? 'Syncing...' : 'Sync Bank (Mock)'}
+          </button>
           <input
             type="text"
             className="form-input"
@@ -214,6 +296,16 @@ const Transactions: React.FC = () => {
             />
           </div>
           <div className="form-group">
+            <label className="form-label">Description</label>
+            <input
+              type="text"
+              placeholder="Optional note"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="form-input"
+            />
+          </div>
+          <div className="form-group">
             <label className="form-label">Status</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input">
               <option value="Paid">Paid</option>
@@ -256,7 +348,14 @@ const Transactions: React.FC = () => {
                 <td>{tx.date}</td>
                 <td>{tx.property}</td>
                 <td>{typeBadge(tx.type)}</td>
-                <td>{tx.category}</td>
+                <td>
+                  <span title={tx.description || undefined}>{tx.category}</span>
+                  {tx.description && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                      {tx.description.length > 50 ? tx.description.slice(0, 50) + '…' : tx.description}
+                    </div>
+                  )}
+                </td>
                 <td style={{ fontWeight: 500 }}>
                   ${tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>

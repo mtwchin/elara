@@ -1,5 +1,6 @@
 const TOKEN_KEY = 're_portfolio_token';
 const EMAIL_KEY = 're_portfolio_email';
+const ACCOUNT_TYPE_KEY = 're_portfolio_account_type';
 
 export const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -11,14 +12,24 @@ export function getEmail(): string | null {
   return localStorage.getItem(EMAIL_KEY);
 }
 
-export function setSession(token: string, email: string) {
+export function getAccountType(): string | null {
+  return localStorage.getItem(ACCOUNT_TYPE_KEY);
+}
+
+export function setSession(token: string, email: string, accountType?: string) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(EMAIL_KEY, email);
+  if (accountType) {
+    localStorage.setItem(ACCOUNT_TYPE_KEY, accountType);
+  } else {
+    localStorage.removeItem(ACCOUNT_TYPE_KEY);
+  }
 }
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EMAIL_KEY);
+  localStorage.removeItem(ACCOUNT_TYPE_KEY);
 }
 
 export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
@@ -61,7 +72,7 @@ export async function login(email: string, password: string): Promise<void> {
     throw new Error(err.detail || 'Login failed');
   }
   const data = await res.json();
-  setSession(data.access_token, data.email);
+  setSession(data.access_token, data.email, data.account_type);
 }
 
 export async function register(email: string, password: string): Promise<void> {
@@ -75,5 +86,5 @@ export async function register(email: string, password: string): Promise<void> {
     throw new Error(err.detail || 'Registration failed');
   }
   const data = await res.json();
-  setSession(data.access_token, data.email);
+  setSession(data.access_token, data.email, data.account_type);
 }

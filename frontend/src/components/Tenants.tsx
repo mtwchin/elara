@@ -270,6 +270,7 @@ const Tenants: React.FC = () => {
               <th>Lease Period</th>
               <th>Rent</th>
               <th>Intent</th>
+              <th>Screening</th>
               <th>Actions</th>
             </tr>
           </thead>
