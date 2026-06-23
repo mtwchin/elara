@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
+import type { MaintenanceRequest } from '../types';
 
 interface TenantInfo {
   id: number;
@@ -11,15 +12,6 @@ interface TenantInfo {
   intent: string;
   daysUntilLeaseEnd: number | null;
   propertyId: number;
-}
-
-interface MaintenanceRequest {
-  id: number;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  createdAt: string;
 }
 
 interface PortalData {

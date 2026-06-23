@@ -1,26 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
-
-interface MaintenanceRequest {
-  id: number;
-  propertyId: number;
-  tenantId: number | null;
-  title: string;
-  description: string;
-  status: 'Open' | 'In Progress' | 'Resolved' | 'Closed';
-  priority: 'Low' | 'Normal' | 'High' | 'Urgent';
-  createdAt: string;
-}
-
-interface PropertyOption {
-  id: number;
-  address: string;
-}
-
-interface TenantOption {
-  id: number;
-  name: string;
-}
+import type { MaintenanceRequest, PropertyOption, TenantOption } from '../types';
 
 interface FormData {
   property_id: string;

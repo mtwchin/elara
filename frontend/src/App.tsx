@@ -8,6 +8,7 @@ import Tools from './components/Tools';
 import Calendar from './components/Calendar';
 import Maintenance from './components/Maintenance';
 import TenantPortal from './components/TenantPortal';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
 import Home from './components/Home';
 import { clearSession, getEmail, getToken, getAccountType } from './auth';
@@ -148,15 +149,17 @@ function App() {
       </div>
 
       <main className="view-transition" key={currentView} style={{ flex: 1, marginTop: '2rem' }}>
-        {currentView === 'dashboard' && <Dashboard />}
-        {currentView === 'properties' && <Properties />}
-        {currentView === 'tenants' && <Tenants />}
-        {currentView === 'transactions' && <Transactions />}
-        {currentView === 'financials' && <Financials />}
-        {currentView === 'tools' && <Tools />}
-        {currentView === 'calendar' && <Calendar />}
-        {currentView === 'maintenance' && <Maintenance />}
-        {currentView === 'tenant-portal' && <TenantPortal />}
+        <ErrorBoundary>
+          {currentView === 'dashboard' && <Dashboard />}
+          {currentView === 'properties' && <Properties />}
+          {currentView === 'tenants' && <Tenants />}
+          {currentView === 'transactions' && <Transactions />}
+          {currentView === 'financials' && <Financials />}
+          {currentView === 'tools' && <Tools />}
+          {currentView === 'calendar' && <Calendar />}
+          {currentView === 'maintenance' && <Maintenance />}
+          {currentView === 'tenant-portal' && <TenantPortal />}
+        </ErrorBoundary>
       </main>
     </div>
   );

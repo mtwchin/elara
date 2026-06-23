@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
+import type { PropertyOption } from '../types';
 
 interface Tenant {
   id: number;
@@ -13,11 +14,6 @@ interface Tenant {
   rentAmount: number | null;
   intent: string;
   daysUntilLeaseEnd: number | null;
-}
-
-interface PropertyOption {
-  id: number;
-  address: string;
 }
 
 interface TenantFormData {

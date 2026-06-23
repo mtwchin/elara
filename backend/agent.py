@@ -12,7 +12,6 @@ Layers:
 import abc
 import os
 import json
-import base64
 import datetime
 from typing import List, Dict, Any, Optional
 from collections import defaultdict

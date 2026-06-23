@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, authUpload } from '../auth';
+import type { PropertyOption } from '../types';
 
 interface Transaction {
   id: number;
@@ -12,11 +13,6 @@ interface Transaction {
   status: string;
   documentCount: number;
   description: string | null;
-}
-
-interface PropertyOption {
-  id: number;
-  address: string;
 }
 
 const Transactions: React.FC = () => {
