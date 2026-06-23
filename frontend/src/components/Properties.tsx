@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { authFetch } from '../auth';
+import React, { useState, useEffect, useRef } from 'react';
+import { authFetch, authUpload } from '../auth';
 
 interface Property {
   id: number;
@@ -98,13 +98,17 @@ const Properties: React.FC = () => {
   const [mortgageForm, setMortgageForm] = useState<MortgageFormData>(EMPTY_MORTGAGE_FORM);
   const [mortgageSubmitting, setMortgageSubmitting] = useState(false);
 
+  // Property image
+  const [imageUrls, setImageUrls] = useState<Record<number, string | null>>({});
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
   const fetchProperties = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/properties');
+      const res = await authFetch('/api/properties?limit=500');
       if (!res.ok) throw new Error('Failed to fetch properties');
       const data = await res.json();
-      setProperties(data);
+      setProperties(data.items ?? data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -131,6 +135,42 @@ const Properties: React.FC = () => {
     }
   };
 
+  const loadPropertyImage = async (id: number) => {
+    if (id in imageUrls) return;
+    try {
+      const res = await authFetch(`/api/properties/${id}/image`);
+      if (res.ok) {
+        const blob = await res.blob();
+        setImageUrls((prev) => ({ ...prev, [id]: URL.createObjectURL(blob) }));
+      } else {
+        setImageUrls((prev) => ({ ...prev, [id]: null }));
+      }
+    } catch {
+      setImageUrls((prev) => ({ ...prev, [id]: null }));
+    }
+  };
+
+  const handleImageUpload = async (id: number) => {
+    const file = imageInputRef.current?.files?.[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await authUpload(`/api/properties/${id}/image`, form);
+      if (!res.ok) throw new Error('Upload failed');
+      // Reload the image
+      setImageUrls((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      loadPropertyImage(id);
+      if (imageInputRef.current) imageInputRef.current.value = '';
+    } catch (err: unknown) {
+      alert('Image upload failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
   const handleSelectRow = (id: number) => {
     if (selectedPropertyId === id) {
       setSelectedPropertyId(null);
@@ -138,6 +178,7 @@ const Properties: React.FC = () => {
     } else {
       setSelectedPropertyId(id);
       fetchMortgage(id);
+      loadPropertyImage(id);
     }
   };
 
@@ -405,6 +446,35 @@ const Properties: React.FC = () => {
           ) : (
             <p style={{ color: 'var(--text-secondary)' }}>No mortgage on file for this property.</p>
           )}
+
+          {/* Property image */}
+          <div style={{ marginTop: '1.25rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <h4 style={{ margin: 0, fontWeight: 600, fontSize: '0.95rem' }}>Property Photo</h4>
+              <label style={{ cursor: 'pointer' }}>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp"
+                  style={{ display: 'none' }}
+                  onChange={() => handleImageUpload(selectedPropertyId!)}
+                />
+                <span className="btn" style={{ fontSize: '0.8rem', padding: '0.3rem 0.8rem' }}>
+                  {imageUrls[selectedPropertyId!] ? 'Replace Photo' : 'Upload Photo'}
+                </span>
+              </label>
+            </div>
+            {imageUrls[selectedPropertyId!] && (
+              <img
+                src={imageUrls[selectedPropertyId!]!}
+                alt="Property"
+                style={{ marginTop: '0.75rem', maxWidth: '100%', maxHeight: '240px', borderRadius: '10px', objectFit: 'cover' }}
+              />
+            )}
+            {imageUrls[selectedPropertyId!] === null && (
+              <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>No photo uploaded yet.</p>
+            )}
+          </div>
         </div>
       )}
 

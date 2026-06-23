@@ -15,12 +15,34 @@ interface Transaction {
   description: string | null;
 }
 
+interface TxDocument {
+  id: number;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  uploadedAt: string | null;
+}
+
+const overlayStyle: React.CSSProperties = {
+  position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+const modalStyle: React.CSSProperties = {
+  background: 'var(--glass-bg)', backdropFilter: 'blur(12px)', borderRadius: '16px',
+  border: '1px solid var(--glass-border)', padding: '2rem', width: '100%', maxWidth: '480px',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.12)', maxHeight: '80vh', overflowY: 'auto',
+};
+
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+
+  const [docModalTxId, setDocModalTxId] = useState<number | null>(null);
+  const [docModalDocs, setDocModalDocs] = useState<TxDocument[]>([]);
+  const [docModalLoading, setDocModalLoading] = useState(false);
 
   // Form state
   const [date, setDate] = useState('');
@@ -39,10 +61,10 @@ const Transactions: React.FC = () => {
   const fetchTransactions = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/transactions');
+      const res = await authFetch('/api/transactions?limit=500');
       if (!res.ok) throw new Error('Failed to fetch transactions');
       const data = await res.json();
-      setTransactions(data);
+      setTransactions(data.items ?? data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -50,11 +72,59 @@ const Transactions: React.FC = () => {
     }
   };
 
+  const handleExportCsv = async () => {
+    try {
+      const res = await authFetch('/api/transactions/export.csv');
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'transactions.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
+  const openDocModal = async (txId: number) => {
+    setDocModalTxId(txId);
+    setDocModalDocs([]);
+    setDocModalLoading(true);
+    try {
+      const res = await authFetch(`/api/transactions/${txId}/documents`);
+      if (res.ok) setDocModalDocs(await res.json());
+    } finally {
+      setDocModalLoading(false);
+    }
+  };
+
+  const downloadDoc = async (docId: number, filename: string) => {
+    try {
+      const res = await authFetch(`/api/documents/${docId}`);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      alert('Download failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    }
+  };
+
   useEffect(() => {
     fetchTransactions();
-    authFetch('/api/properties')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: PropertyOption[]) => setProperties(data))
+    authFetch('/api/properties?limit=500')
+      .then((res) => (res.ok ? res.json() : { items: [] }))
+      .then((data) => setProperties(data.items ?? data))
       .catch((err) => console.error('Failed to load properties for dropdown', err));
   }, []);
 
@@ -220,6 +290,9 @@ const Transactions: React.FC = () => {
           >
             {categorizing ? (categorizeProgress || 'Categorizing…') : 'Auto-Categorize'}
           </button>
+          <button className="btn" onClick={handleExportCsv} title="Download all transactions as CSV">
+            Export CSV
+          </button>
           <button
             className="btn btn-primary"
             onClick={handleSyncBank}
@@ -357,12 +430,18 @@ const Transactions: React.FC = () => {
                 </td>
                 <td>{statusBadge(tx.status)}</td>
                 <td>
-                  <span
-                    title={`${tx.documentCount} document${tx.documentCount !== 1 ? 's' : ''}`}
-                    style={{ color: tx.documentCount > 0 ? 'var(--accent-purple)' : 'var(--text-secondary)', fontSize: '0.85rem' }}
-                  >
-                    {tx.documentCount > 0 ? tx.documentCount : '—'}
-                  </span>
+                  {tx.documentCount > 0 ? (
+                    <button
+                      className="btn"
+                      onClick={() => openDocModal(tx.id)}
+                      title={`View ${tx.documentCount} document${tx.documentCount !== 1 ? 's' : ''}`}
+                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.8rem', color: 'var(--accent-purple)' }}
+                    >
+                      {tx.documentCount}
+                    </button>
+                  ) : (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -382,6 +461,40 @@ const Transactions: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {docModalTxId !== null && (
+        <div style={overlayStyle} onClick={() => setDocModalTxId(null)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Documents</h2>
+              <button className="btn" style={{ padding: '0.25rem 0.75rem' }} onClick={() => setDocModalTxId(null)}>Close</button>
+            </div>
+            {docModalLoading ? (
+              <p style={{ color: 'var(--text-muted)' }}>Loading…</p>
+            ) : docModalDocs.length === 0 ? (
+              <p style={{ color: 'var(--text-muted)' }}>No documents found.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {docModalDocs.map((doc) => (
+                  <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', gap: '0.5rem' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.filename}</div>
+                      {doc.sizeBytes && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{(doc.sizeBytes / 1024).toFixed(1)} KB</div>}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', flexShrink: 0 }}
+                      onClick={() => downloadDoc(doc.id, doc.filename)}
+                    >
+                      Download
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

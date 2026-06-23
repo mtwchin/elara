@@ -94,6 +94,9 @@ async def health_check():
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+PROPERTY_IMAGES_DIR = os.path.join(UPLOAD_DIR, "property_images")
+os.makedirs(PROPERTY_IMAGES_DIR, exist_ok=True)
+
 ALLOWED_MIME_TYPES = {
     "application/pdf",
     "image/png",
@@ -523,11 +526,15 @@ def _serialize_property(p: Property, db: Session) -> dict:
 
 @app.get("/api/properties")
 async def get_properties(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    properties = db.query(Property).all()
-    return [_serialize_property(p, db) for p in properties]
+    q = db.query(Property)
+    total = q.count()
+    properties = q.offset(skip).limit(limit).all()
+    return {"items": [_serialize_property(p, db) for p in properties], "total": total, "skip": skip, "limit": limit}
 
 
 @app.get("/api/properties/{property_id}")
@@ -597,6 +604,54 @@ async def delete_property(
         raise HTTPException(status_code=404, detail="Property not found")
     db.delete(prop)
     db.commit()
+
+
+_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+@app.post("/api/properties/{property_id}/image", status_code=200)
+async def upload_property_image(
+    property_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Upload or replace the cover image for a property."""
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    _, ext = os.path.splitext(file.filename or "")
+    if ext.lower() not in _IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext}")
+    dest = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{ext.lower()}")
+    # Remove any existing image for this property (different extension)
+    for f_ext in _IMAGE_EXTENSIONS:
+        old = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{f_ext}")
+        if os.path.exists(old) and old != dest:
+            os.remove(old)
+    content = await file.read()
+    with open(dest, "wb") as fh:
+        fh.write(content)
+    return {"message": "Image uploaded", "property_id": property_id}
+
+
+@app.get("/api/properties/{property_id}/image")
+async def get_property_image(
+    property_id: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the property cover image (streams file)."""
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    for ext in _IMAGE_EXTENSIONS:
+        path = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{ext}")
+        if os.path.exists(path):
+            mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else f"image/{ext.lstrip('.')}"
+            return StreamingResponse(open(path, "rb"), media_type=mime)
+    raise HTTPException(status_code=404, detail="No image uploaded for this property")
 
 
 # ---------------------------------------------------------------------------
@@ -754,11 +809,15 @@ def _serialize_tenant(t: Tenant, db: Session) -> dict:
 
 @app.get("/api/tenants")
 async def get_tenants(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    tenants = db.query(Tenant).all()
-    return [_serialize_tenant(t, db) for t in tenants]
+    q = db.query(Tenant)
+    total = q.count()
+    tenants = q.offset(skip).limit(limit).all()
+    return {"items": [_serialize_tenant(t, db) for t in tenants], "total": total, "skip": skip, "limit": limit}
 
 
 @app.get("/api/tenants/{tenant_id}")
@@ -933,11 +992,15 @@ def _serialize_maintenance(m: MaintenanceRequest) -> dict:
 
 @app.get("/api/maintenance")
 async def get_maintenance_requests(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    requests = db.query(MaintenanceRequest).all()
-    return [_serialize_maintenance(r) for r in requests]
+    q = db.query(MaintenanceRequest)
+    total = q.count()
+    requests = q.offset(skip).limit(limit).all()
+    return {"items": [_serialize_maintenance(r) for r in requests], "total": total, "skip": skip, "limit": limit}
 
 
 @app.post("/api/maintenance", status_code=201)
@@ -1152,11 +1215,49 @@ def _serialize_transaction(t: Transaction, db: Session) -> dict:
 
 @app.get("/api/transactions")
 async def get_transactions(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    transactions = db.query(Transaction).all()
-    return [_serialize_transaction(t, db) for t in transactions]
+    q = db.query(Transaction)
+    total = q.count()
+    transactions = q.offset(skip).limit(limit).all()
+    return {"items": [_serialize_transaction(t, db) for t in transactions], "total": total, "skip": skip, "limit": limit}
+
+
+@app.get("/api/transactions/export.csv")
+async def export_transactions_csv(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Download all transactions as CSV."""
+    rows = (
+        db.query(Transaction)
+        .join(Property, Transaction.property_id == Property.id)
+        .filter(Property.user_id == current_user.id)
+        .order_by(Transaction.transaction_date.desc())
+        .all()
+    )
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Property", "Type", "Category", "Amount", "Status", "Description"])
+    for r in rows:
+        writer.writerow([
+            r.transaction_date.isoformat() if r.transaction_date else "",
+            r.property.address if r.property else "",
+            r.type,
+            r.category,
+            r.amount,
+            r.status,
+            r.description or "",
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=transactions.csv"},
+    )
 
 
 @app.get("/api/transactions/{transaction_id}")

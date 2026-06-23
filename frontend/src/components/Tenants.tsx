@@ -98,10 +98,10 @@ const Tenants: React.FC = () => {
   const fetchTenants = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/tenants');
+      const res = await authFetch('/api/tenants?limit=500');
       if (!res.ok) throw new Error('Failed to fetch tenants');
-      const data: Tenant[] = await res.json();
-      setTenants(data);
+      const data = await res.json();
+      setTenants(data.items ?? data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -111,9 +111,9 @@ const Tenants: React.FC = () => {
 
   useEffect(() => {
     fetchTenants();
-    authFetch('/api/properties')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: PropertyOption[]) => setProperties(data))
+    authFetch('/api/properties?limit=500')
+      .then((res) => (res.ok ? res.json() : { items: [] }))
+      .then((data) => setProperties(data.items ?? data))
       .catch(() => {});
   }, []);
 

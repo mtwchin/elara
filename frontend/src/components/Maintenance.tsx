@@ -76,10 +76,10 @@ const Maintenance: React.FC = () => {
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/maintenance');
+      const res = await authFetch('/api/maintenance?limit=500');
       if (!res.ok) throw new Error('Failed to fetch maintenance requests');
-      const data: MaintenanceRequest[] = await res.json();
-      setRequests(data);
+      const data = await res.json();
+      setRequests(data.items ?? data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -89,13 +89,13 @@ const Maintenance: React.FC = () => {
 
   useEffect(() => {
     fetchRequests();
-    authFetch('/api/properties')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: PropertyOption[]) => setProperties(d))
+    authFetch('/api/properties?limit=500')
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => setProperties(d.items ?? d))
       .catch(() => {});
-    authFetch('/api/tenants')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d: TenantOption[]) => setTenants(d))
+    authFetch('/api/tenants?limit=500')
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => setTenants(d.items ?? d))
       .catch(() => {});
   }, []);
 
