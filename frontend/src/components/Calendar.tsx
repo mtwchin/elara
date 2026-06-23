@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
+import { notify } from '../toast';
 
 interface Property {
   id: number;
@@ -108,8 +109,9 @@ const Calendar: React.FC = () => {
         throw new Error(err.detail || 'Workflow failed');
       }
       setRenewalResult(await res.json());
+      notify.success('Renewal workflow complete');
     } catch (e: unknown) {
-      alert('Error: ' + (e instanceof Error ? e.message : 'Unknown error'));
+      notify.error(e instanceof Error ? e.message : 'Workflow failed');
     } finally {
       setRenewalLoading(null);
     }

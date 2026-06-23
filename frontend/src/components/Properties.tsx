@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, authUpload } from '../auth';
+import { notify } from '../toast';
+import Modal from './ui/Modal';
+import ConfirmDialog from './ui/ConfirmDialog';
 
 interface Property {
   id: number;
@@ -55,52 +58,29 @@ const EMPTY_MORTGAGE_FORM: MortgageFormData = {
   monthly_escrow: '',
 };
 
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 1000,
-  background: 'rgba(0,0,0,0.4)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-
-const modalStyle: React.CSSProperties = {
-  background: 'var(--glass-bg)',
-  backdropFilter: 'blur(12px)',
-  borderRadius: '16px',
-  border: '1px solid var(--glass-border)',
-  padding: '2rem',
-  width: '100%',
-  maxWidth: '520px',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-};
-
 const Properties: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  // Property modal
   const [showPropertyModal, setShowPropertyModal] = useState(false);
   const [editingProperty, setEditingProperty] = useState<Property | null>(null);
   const [propertyForm, setPropertyForm] = useState<PropertyFormData>(EMPTY_PROPERTY_FORM);
   const [propertySubmitting, setPropertySubmitting] = useState(false);
 
-  // Selected property for mortgage section
   const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null);
   const [mortgage, setMortgage] = useState<Mortgage | null | undefined>(undefined);
   const [mortgageLoading, setMortgageLoading] = useState(false);
 
-  // Mortgage modal
   const [showMortgageModal, setShowMortgageModal] = useState(false);
   const [mortgageForm, setMortgageForm] = useState<MortgageFormData>(EMPTY_MORTGAGE_FORM);
   const [mortgageSubmitting, setMortgageSubmitting] = useState(false);
 
-  // Property image
   const [imageUrls, setImageUrls] = useState<Record<number, string | null>>({});
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
   const fetchProperties = async () => {
     setLoading(true);
@@ -116,9 +96,7 @@ const Properties: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    fetchProperties();
-  }, []);
+  useEffect(() => { fetchProperties(); }, []);
 
   const fetchMortgage = async (propertyId: number) => {
     setMortgageLoading(true);
@@ -126,8 +104,7 @@ const Properties: React.FC = () => {
     try {
       const res = await authFetch(`/api/properties/${propertyId}/mortgage`);
       if (!res.ok) throw new Error('Failed to fetch mortgage');
-      const data = await res.json();
-      setMortgage(data);
+      setMortgage(await res.json());
     } catch {
       setMortgage(null);
     } finally {
@@ -158,16 +135,12 @@ const Properties: React.FC = () => {
     try {
       const res = await authUpload(`/api/properties/${id}/image`, form);
       if (!res.ok) throw new Error('Upload failed');
-      // Reload the image
-      setImageUrls((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      setImageUrls((prev) => { const next = { ...prev }; delete next[id]; return next; });
       loadPropertyImage(id);
       if (imageInputRef.current) imageInputRef.current.value = '';
+      notify.success('Photo uploaded');
     } catch (err: unknown) {
-      alert('Image upload failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Image upload failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -182,7 +155,6 @@ const Properties: React.FC = () => {
     }
   };
 
-  // Property modal handlers
   const openAddProperty = () => {
     setEditingProperty(null);
     setPropertyForm(EMPTY_PROPERTY_FORM);
@@ -202,19 +174,17 @@ const Properties: React.FC = () => {
     setShowPropertyModal(true);
   };
 
-  const handleDeleteProperty = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!window.confirm('Delete this property? This cannot be undone.')) return;
+  const handleDeleteProperty = async (id: number) => {
     try {
       const res = await authFetch(`/api/properties/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete property');
       setProperties((prev) => prev.filter((p) => p.id !== id));
-      if (selectedPropertyId === id) {
-        setSelectedPropertyId(null);
-        setMortgage(undefined);
-      }
+      if (selectedPropertyId === id) { setSelectedPropertyId(null); setMortgage(undefined); }
+      notify.success('Property deleted');
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setConfirmDelete(null);
     }
   };
 
@@ -234,15 +204,15 @@ const Properties: React.FC = () => {
         : await authFetch('/api/properties', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save property');
       setShowPropertyModal(false);
+      notify.success(editingProperty ? 'Property updated' : 'Property added');
       fetchProperties();
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setPropertySubmitting(false);
     }
   };
 
-  // Mortgage modal handlers
   const openMortgageModal = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (mortgage) {
@@ -274,53 +244,36 @@ const Properties: React.FC = () => {
     };
     try {
       const method = mortgage ? 'PUT' : 'POST';
-      const res = await authFetch(`/api/properties/${selectedPropertyId}/mortgage`, {
-        method,
-        body: JSON.stringify(payload),
-      });
+      const res = await authFetch(`/api/properties/${selectedPropertyId}/mortgage`, { method, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save mortgage');
       setShowMortgageModal(false);
+      notify.success(mortgage ? 'Mortgage updated' : 'Mortgage added');
       fetchMortgage(selectedPropertyId);
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setMortgageSubmitting(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="app-container">
-        <div className="loading-container fade-in">Loading Properties...</div>
+  if (loading) return <div className="app-container"><div className="loading-container fade-in">Loading Properties...</div></div>;
+  if (error) return (
+    <div className="app-container fade-in">
+      <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
+        <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
+        <p>{error}</p>
       </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="app-container fade-in">
-        <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
-          <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
-          <p>{error}</p>
-        </div>
-      </div>
-    );
-  }
+    </div>
+  );
 
   const statusBadge = (status: string) => {
-    const variant =
-      status === 'Occupied' ? 'badge-success' :
-      status === 'Vacant' ? 'badge-warning' :
-      'badge-warning';
+    const variant = status === 'Occupied' ? 'badge-success' : 'badge-warning';
     return <span className={`badge ${variant}`}>{status}</span>;
   };
 
   const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
-
   const filteredProperties = properties.filter((p) =>
-    [p.address, p.propertyType, p.status].some((v) =>
-      (v || '').toLowerCase().includes(search.toLowerCase())
-    )
+    [p.address, p.propertyType, p.status].some((v) => (v || '').toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
@@ -366,10 +319,7 @@ const Properties: React.FC = () => {
               <tr
                 key={prop.id}
                 onClick={() => handleSelectRow(prop.id)}
-                style={{
-                  cursor: 'pointer',
-                  background: selectedPropertyId === prop.id ? 'rgba(147,51,234,0.06)' : undefined,
-                }}
+                style={{ cursor: 'pointer', background: selectedPropertyId === prop.id ? 'var(--brand-primary-soft)' : undefined }}
               >
                 <td style={{ fontWeight: 500 }}>{prop.address}</td>
                 <td>${prop.purchasePrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
@@ -388,7 +338,7 @@ const Properties: React.FC = () => {
                     <button
                       className="btn"
                       style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
-                      onClick={(e) => handleDeleteProperty(prop.id, e)}
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(prop.id); }}
                     >
                       Delete
                     </button>
@@ -404,7 +354,7 @@ const Properties: React.FC = () => {
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                     </div>
                     <h3>{search.length > 0 ? 'No properties match your search' : 'No properties yet'}</h3>
-                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add your first property to get started with portfolio tracking.'}</p>
+                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add your first property to get started.'}</p>
                   </div>
                 </td>
               </tr>
@@ -413,7 +363,6 @@ const Properties: React.FC = () => {
         </table>
       </div>
 
-      {/* Mortgage section */}
       {selectedPropertyId && selectedProperty && (
         <div className="glass-panel-static" style={{ marginTop: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -437,7 +386,7 @@ const Properties: React.FC = () => {
                 { label: 'Monthly P&I', value: `$${mortgage.monthlyPi?.toLocaleString()}` },
                 { label: 'Monthly Escrow', value: `$${mortgage.monthlyEscrow?.toLocaleString()}` },
               ].map(({ label, value }) => (
-                <div key={label} className="metric-card" style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: '10px' }}>
+                <div key={label} style={{ padding: '1rem', background: 'var(--bg-tertiary)', borderRadius: '10px' }}>
                   <div className="metric-label">{label}</div>
                   <div style={{ fontWeight: 600, fontSize: '1.05rem', marginTop: '0.25rem' }}>{value}</div>
                 </div>
@@ -447,7 +396,6 @@ const Properties: React.FC = () => {
             <p style={{ color: 'var(--text-secondary)' }}>No mortgage on file for this property.</p>
           )}
 
-          {/* Property image */}
           <div style={{ marginTop: '1.25rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
               <h4 style={{ margin: 0, fontWeight: 600, fontSize: '0.95rem' }}>Property Photo</h4>
@@ -465,175 +413,109 @@ const Properties: React.FC = () => {
               </label>
             </div>
             {imageUrls[selectedPropertyId!] && (
-              <img
-                src={imageUrls[selectedPropertyId!]!}
-                alt="Property"
-                style={{ marginTop: '0.75rem', maxWidth: '100%', maxHeight: '240px', borderRadius: '10px', objectFit: 'cover' }}
-              />
+              <img src={imageUrls[selectedPropertyId!]!} alt="Property"
+                style={{ marginTop: '0.75rem', maxWidth: '100%', maxHeight: '240px', borderRadius: '10px', objectFit: 'cover' }} />
             )}
             {imageUrls[selectedPropertyId!] === null && (
-              <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>No photo uploaded yet.</p>
+              <p style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>No photo uploaded yet.</p>
             )}
           </div>
         </div>
       )}
 
-      {/* Property add/edit modal */}
-      {showPropertyModal && (
-        <div style={overlayStyle} onClick={() => setShowPropertyModal(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginBottom: '1.5rem' }}>{editingProperty ? 'Edit Property' : 'Add Property'}</h2>
-            <form onSubmit={handlePropertySubmit}>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Address</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  required
-                  value={propertyForm.address}
-                  onChange={(e) => setPropertyForm({ ...propertyForm, address: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Property Type</label>
-                <select
-                  className="form-input"
-                  value={propertyForm.propertyType}
-                  onChange={(e) => setPropertyForm({ ...propertyForm, propertyType: e.target.value })}
-                >
-                  <option value="Residential">Residential</option>
-                  <option value="Commercial">Commercial</option>
-                  <option value="Multi-Family">Multi-Family</option>
-                </select>
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Purchase Price</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  required
-                  min="0"
-                  step="1"
-                  value={propertyForm.purchasePrice}
-                  onChange={(e) => setPropertyForm({ ...propertyForm, purchasePrice: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Purchase Date</label>
-                <input
-                  type="date"
-                  className="form-input"
-                  required
-                  value={propertyForm.purchaseDate}
-                  onChange={(e) => setPropertyForm({ ...propertyForm, purchaseDate: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                <label className="form-label">Status</label>
-                <select
-                  className="form-input"
-                  value={propertyForm.status}
-                  onChange={(e) => setPropertyForm({ ...propertyForm, status: e.target.value })}
-                >
-                  <option value="Active">Active</option>
-                  <option value="Vacant">Vacant</option>
-                </select>
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => setShowPropertyModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={propertySubmitting}>
-                  {propertySubmitting ? 'Saving...' : 'Save Property'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="Delete Property"
+        message="Are you sure you want to delete this property? This cannot be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => confirmDelete !== null && handleDeleteProperty(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
-      {/* Mortgage add/edit modal */}
-      {showMortgageModal && (
-        <div style={overlayStyle} onClick={() => setShowMortgageModal(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginBottom: '1.5rem' }}>{mortgage ? 'Edit Mortgage' : 'Add Mortgage'}</h2>
-            <form onSubmit={handleMortgageSubmit}>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Lender</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={mortgageForm.lender}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, lender: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Principal ($)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  required
-                  min="0"
-                  step="0.01"
-                  value={mortgageForm.principal}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, principal: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Interest Rate (%)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  required
-                  min="0"
-                  step="0.01"
-                  value={mortgageForm.interest_rate}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, interest_rate: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Term (months)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  required
-                  min="1"
-                  step="1"
-                  value={mortgageForm.term_months}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, term_months: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1rem' }}>
-                <label className="form-label">Monthly P&I ($)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  required
-                  min="0"
-                  step="0.01"
-                  value={mortgageForm.monthly_pi}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_pi: e.target.value })}
-                />
-              </div>
-              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                <label className="form-label">Monthly Escrow ($)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  min="0"
-                  step="0.01"
-                  value={mortgageForm.monthly_escrow}
-                  onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_escrow: e.target.value })}
-                />
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => setShowMortgageModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={mortgageSubmitting}>
-                  {mortgageSubmitting ? 'Saving...' : 'Save Mortgage'}
-                </button>
-              </div>
-            </form>
+      <Modal open={showPropertyModal} onClose={() => setShowPropertyModal(false)} title={editingProperty ? 'Edit Property' : 'Add Property'}>
+        <form onSubmit={handlePropertySubmit}>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Address</label>
+            <input type="text" className="form-input" required value={propertyForm.address}
+              onChange={(e) => setPropertyForm({ ...propertyForm, address: e.target.value })} />
           </div>
-        </div>
-      )}
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Property Type</label>
+            <select className="form-input" value={propertyForm.propertyType}
+              onChange={(e) => setPropertyForm({ ...propertyForm, propertyType: e.target.value })}>
+              <option value="Residential">Residential</option>
+              <option value="Commercial">Commercial</option>
+              <option value="Multi-Family">Multi-Family</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Purchase Price</label>
+            <input type="number" className="form-input" required min="0" step="1" value={propertyForm.purchasePrice}
+              onChange={(e) => setPropertyForm({ ...propertyForm, purchasePrice: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Purchase Date</label>
+            <input type="date" className="form-input" required value={propertyForm.purchaseDate}
+              onChange={(e) => setPropertyForm({ ...propertyForm, purchaseDate: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <label className="form-label">Status</label>
+            <select className="form-input" value={propertyForm.status}
+              onChange={(e) => setPropertyForm({ ...propertyForm, status: e.target.value })}>
+              <option value="Active">Active</option>
+              <option value="Vacant">Vacant</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={() => setShowPropertyModal(false)}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={propertySubmitting}>
+              {propertySubmitting ? 'Saving...' : 'Save Property'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={showMortgageModal} onClose={() => setShowMortgageModal(false)} title={mortgage ? 'Edit Mortgage' : 'Add Mortgage'}>
+        <form onSubmit={handleMortgageSubmit}>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Lender</label>
+            <input type="text" className="form-input" value={mortgageForm.lender}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, lender: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Principal ($)</label>
+            <input type="number" className="form-input" required min="0" step="0.01" value={mortgageForm.principal}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, principal: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Interest Rate (%)</label>
+            <input type="number" className="form-input" required min="0" step="0.01" value={mortgageForm.interest_rate}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, interest_rate: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Term (months)</label>
+            <input type="number" className="form-input" required min="1" step="1" value={mortgageForm.term_months}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, term_months: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1rem' }}>
+            <label className="form-label">Monthly P&I ($)</label>
+            <input type="number" className="form-input" required min="0" step="0.01" value={mortgageForm.monthly_pi}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_pi: e.target.value })} />
+          </div>
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <label className="form-label">Monthly Escrow ($)</label>
+            <input type="number" className="form-input" min="0" step="0.01" value={mortgageForm.monthly_escrow}
+              onChange={(e) => setMortgageForm({ ...mortgageForm, monthly_escrow: e.target.value })} />
+          </div>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={() => setShowMortgageModal(false)}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={mortgageSubmitting}>
+              {mortgageSubmitting ? 'Saving...' : 'Save Mortgage'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts';
 import { authFetch, getToken, API_BASE } from '../auth';
+import { notify } from '../toast';
 
 interface PropertyCashFlow {
   id: number;
@@ -52,8 +54,9 @@ const Financials: React.FC = () => {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      notify.success('Rent roll downloaded');
     } catch (err: unknown) {
-      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -73,8 +76,9 @@ const Financials: React.FC = () => {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      notify.success('Schedule E downloaded');
     } catch (err: unknown) {
-      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -157,6 +161,39 @@ const Financials: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {report.properties.length > 0 && (
+        <div className="glass-panel-static" style={{ marginTop: '1.25rem' }}>
+          <h3 style={{ marginBottom: '1rem' }}>Monthly Cash Flow by Property</h3>
+          <div style={{ height: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={report.properties.map((p) => ({
+                name: p.address.split(',')[0],
+                cashFlow: p.monthlyCashFlow,
+              }))} barCategoryGap="30%">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--text-secondary)' }} axisLine={false} tickLine={false} />
+                <YAxis
+                  tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                  tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                  axisLine={false} tickLine={false} width={50}
+                />
+                <Tooltip
+                  formatter={(v: unknown) => { const n = Number(v); return [`$${n.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Monthly CF']; }}
+                  contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--glass-border)', borderRadius: 10 }}
+                  labelStyle={{ color: 'var(--text-primary)', fontWeight: 600 }}
+                  cursor={{ fill: 'rgba(79,70,229,0.04)' }}
+                />
+                <Bar dataKey="cashFlow" radius={[4, 4, 0, 0]}>
+                  {report.properties.map((p, i) => (
+                    <Cell key={i} fill={p.monthlyCashFlow >= 0 ? 'var(--chart-revenue)' : 'var(--danger)'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       <div className="glass-panel-static" style={{ overflowX: 'auto', marginTop: '1.25rem' }}>
         <h3 style={{ marginBottom: '1rem' }}>Property Breakdown</h3>

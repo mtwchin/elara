@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
 import type { MaintenanceRequest, PropertyOption, TenantOption } from '../types';
+import { notify } from '../toast';
+import Modal from './ui/Modal';
 
 interface FormData {
   property_id: string;
@@ -18,29 +20,6 @@ const EMPTY_FORM: FormData = {
   description: '',
   status: 'Open',
   priority: 'Normal',
-};
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 1000,
-  background: 'rgba(0,0,0,0.4)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-
-const modalStyle: React.CSSProperties = {
-  background: 'var(--glass-bg)',
-  backdropFilter: 'blur(12px)',
-  borderRadius: '16px',
-  border: '1px solid var(--glass-border)',
-  padding: '2rem',
-  width: '100%',
-  maxWidth: '520px',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-  maxHeight: '90vh',
-  overflowY: 'auto',
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -138,9 +117,10 @@ const Maintenance: React.FC = () => {
         : await authFetch('/api/maintenance', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save request');
       setShowModal(false);
+      notify.success(editingRequest ? 'Request updated' : 'Request created');
       fetchRequests();
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSubmitting(false);
     }
@@ -156,8 +136,9 @@ const Maintenance: React.FC = () => {
       if (!res.ok) throw new Error('Suggestion failed');
       const data: { priority: string; reasoning: string } = await res.json();
       setSuggestions((prev) => ({ ...prev, [req.id]: data }));
+      notify.success('Priority suggestion ready');
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Suggestion failed');
     } finally {
       setSuggestingFor(null);
     }
@@ -175,9 +156,10 @@ const Maintenance: React.FC = () => {
         delete next[req.id];
         return next;
       });
+      notify.success('Priority updated');
       fetchRequests();
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Update failed');
     }
   };
 
@@ -331,13 +313,8 @@ const Maintenance: React.FC = () => {
         )}
       </div>
 
-      {showModal && (
-        <div style={overlayStyle} onClick={() => setShowModal(false)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ marginBottom: '1.5rem', fontSize: '1.3rem' }}>
-              {editingRequest ? 'Edit Request' : 'New Maintenance Request'}
-            </h2>
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <Modal open={showModal} onClose={() => setShowModal(false)} title={editingRequest ? 'Edit Request' : 'New Maintenance Request'}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
                   Property *
@@ -425,17 +402,13 @@ const Maintenance: React.FC = () => {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                <button type="button" className="btn" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
+                <button type="button" className="btn" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? 'Saving…' : editingRequest ? 'Update' : 'Create'}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </Modal>
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
 import type { MaintenanceRequest } from '../types';
+import { notify } from '../toast';
 
 interface TenantInfo {
   id: number;
@@ -108,9 +109,10 @@ const TenantPortal: React.FC = () => {
       setShowModal(false);
       setTitle('');
       setDescription('');
+      notify.success('Maintenance request submitted');
       fetchPortal();
     } catch (err: unknown) {
-      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error(err instanceof Error ? err.message : 'Submit failed');
     } finally {
       setSubmitting(false);
     }

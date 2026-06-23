@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { authFetch, authUpload } from '../auth';
 import type { PropertyOption } from '../types';
+import { notify } from '../toast';
+import Modal from './ui/Modal';
 
 interface Transaction {
   id: number;
@@ -23,16 +25,6 @@ interface TxDocument {
   uploadedAt: string | null;
 }
 
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-};
-const modalStyle: React.CSSProperties = {
-  background: 'var(--glass-bg)', backdropFilter: 'blur(12px)', borderRadius: '16px',
-  border: '1px solid var(--glass-border)', padding: '2rem', width: '100%', maxWidth: '480px',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.12)', maxHeight: '80vh', overflowY: 'auto',
-};
-
 const Transactions: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [properties, setProperties] = useState<PropertyOption[]>([]);
@@ -44,7 +36,6 @@ const Transactions: React.FC = () => {
   const [docModalDocs, setDocModalDocs] = useState<TxDocument[]>([]);
   const [docModalLoading, setDocModalLoading] = useState(false);
 
-  // Form state
   const [date, setDate] = useState('');
   const [propertyId, setPropertyId] = useState<string>('');
   const [type, setType] = useState('Income');
@@ -85,8 +76,9 @@ const Transactions: React.FC = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      notify.success('CSV downloaded');
     } catch (err: unknown) {
-      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -116,7 +108,7 @@ const Transactions: React.FC = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
-      alert('Download failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Download failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -131,24 +123,15 @@ const Transactions: React.FC = () => {
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!propertyId) {
-      alert('Please select a property.');
+      notify.warning('Please select a property.');
       return;
     }
     const newTx = {
-      date,
-      property_id: parseInt(propertyId, 10),
-      type,
-      category,
-      amount: parseFloat(amount),
-      description: description || null,
-      status,
+      date, property_id: parseInt(propertyId, 10), type, category,
+      amount: parseFloat(amount), description: description || null, status,
     };
-
     try {
-      const res = await authFetch('/api/transactions', {
-        method: 'POST',
-        body: JSON.stringify(newTx),
-      });
+      const res = await authFetch('/api/transactions', { method: 'POST', body: JSON.stringify(newTx) });
       if (!res.ok) throw new Error('Failed to add transaction');
       const created: Transaction = await res.json();
 
@@ -159,22 +142,17 @@ const Transactions: React.FC = () => {
         const uploadRes = await authUpload(`/api/transactions/${created.id}/documents`, formData);
         if (!uploadRes.ok) {
           const errBody = await uploadRes.json().catch(() => ({ detail: 'Upload failed' }));
-          alert('Transaction saved but file upload failed: ' + (errBody.detail || 'Unknown error'));
+          notify.warning('Transaction saved but file upload failed: ' + (errBody.detail || 'Unknown error'));
         }
       }
 
-      setDate('');
-      setPropertyId('');
-      setType('Income');
-      setCategory('');
-      setAmount('');
-      setDescription('');
-      setStatus('Paid');
+      setDate(''); setPropertyId(''); setType('Income'); setCategory('');
+      setAmount(''); setDescription(''); setStatus('Paid');
       if (fileInputRef.current) fileInputRef.current.value = '';
-
+      notify.success('Transaction logged');
       fetchTransactions();
     } catch (err: unknown) {
-      alert('Error adding transaction: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Error adding transaction: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -184,21 +162,19 @@ const Transactions: React.FC = () => {
       const res = await authFetch('/api/bank/sync', { method: 'POST' });
       if (!res.ok) throw new Error('Failed to sync bank');
       const data = await res.json();
-      alert(`Bank sync complete: ${data.message || 'New transactions loaded.'}`);
+      notify.success(`Bank sync complete: ${data.message || 'New transactions loaded.'}`);
       fetchTransactions();
     } catch (err: unknown) {
-      alert('Error syncing bank: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      notify.error('Error syncing bank: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setSyncing(false);
     }
   };
 
   const handleAutoCategorize = async () => {
-    const uncategorized = transactions.filter(
-      (tx) => !tx.category || tx.category === 'Other'
-    );
+    const uncategorized = transactions.filter((tx) => !tx.category || tx.category === 'Other');
     if (uncategorized.length === 0) {
-      alert('No uncategorized transactions found.');
+      notify.info('No uncategorized transactions found.');
       return;
     }
 
@@ -208,43 +184,30 @@ const Transactions: React.FC = () => {
     for (let i = 0; i < uncategorized.length; i++) {
       const tx = uncategorized[i];
       setCategorizeProgress(`Categorizing ${i + 1} of ${uncategorized.length}…`);
-
       try {
         const res = await authFetch('/api/agents/categorize-transaction', {
           method: 'POST',
-          body: JSON.stringify({
-            description: tx.description || tx.category || '',
-            amount: tx.amount,
-            property_id: tx.propertyId,
-          }),
+          body: JSON.stringify({ description: tx.description || tx.category || '', amount: tx.amount, property_id: tx.propertyId }),
         });
         if (!res.ok) continue;
         const result: { category: string; confidence: number; reasoning: string } = await res.json();
-
         if (result.confidence > 0.6 && result.category && result.category !== 'Other') {
           const putRes = await authFetch(`/api/transactions/${tx.id}`, {
-            method: 'PUT',
-            body: JSON.stringify({ category: result.category }),
+            method: 'PUT', body: JSON.stringify({ category: result.category }),
           });
           if (putRes.ok) updated++;
         }
-      } catch {
-        // non-fatal — continue to next
-      }
+      } catch { /* non-fatal */ }
     }
 
     setCategorizing(false);
     setCategorizeProgress(null);
-    alert(`Done. Updated ${updated} of ${uncategorized.length} transactions.`);
+    notify.success(`Done. Updated ${updated} of ${uncategorized.length} transactions.`);
     fetchTransactions();
   };
 
   if (loading && transactions.length === 0) {
-    return (
-      <div className="app-container">
-        <div className="loading-container fade-in">Loading Transactions...</div>
-      </div>
-    );
+    return <div className="app-container"><div className="loading-container fade-in">Loading Transactions...</div></div>;
   }
 
   if (error) {
@@ -258,15 +221,8 @@ const Transactions: React.FC = () => {
     );
   }
 
-  const statusBadge = (s: string) => {
-    const variant = s === 'Paid' ? 'badge-success' : 'badge-warning';
-    return <span className={`badge ${variant}`}>{s}</span>;
-  };
-
-  const typeBadge = (t: string) => {
-    const variant = t === 'Income' ? 'badge-success' : 'badge-danger';
-    return <span className={`badge ${variant}`}>{t}</span>;
-  };
+  const statusBadge = (s: string) => <span className={`badge ${s === 'Paid' ? 'badge-success' : 'badge-warning'}`}>{s}</span>;
+  const typeBadge = (t: string) => <span className={`badge ${t === 'Income' ? 'badge-success' : 'badge-danger'}`}>{t}</span>;
 
   const filteredTransactions = transactions.filter((tx) =>
     [tx.property, tx.category, tx.type, tx.status, tx.description].some((v) =>
@@ -282,32 +238,15 @@ const Transactions: React.FC = () => {
           <p>Ledger and financial records.</p>
         </div>
         <div className="page-header-actions">
-          <button
-            className="btn"
-            onClick={handleAutoCategorize}
-            disabled={categorizing}
-            title="Use AI to classify uncategorized transactions"
-          >
+          <button className="btn" onClick={handleAutoCategorize} disabled={categorizing} title="Use AI to classify uncategorized transactions">
             {categorizing ? (categorizeProgress || 'Categorizing…') : 'Auto-Categorize'}
           </button>
-          <button className="btn" onClick={handleExportCsv} title="Download all transactions as CSV">
-            Export CSV
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSyncBank}
-            disabled={syncing}
-          >
+          <button className="btn" onClick={handleExportCsv} title="Download all transactions as CSV">Export CSV</button>
+          <button className="btn btn-primary" onClick={handleSyncBank} disabled={syncing}>
             {syncing ? 'Syncing...' : 'Sync Bank (Mock)'}
           </button>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: '220px' }}
-          />
+          <input type="text" className="form-input" placeholder="Search..." value={search}
+            onChange={(e) => setSearch(e.target.value)} style={{ width: '220px' }} />
         </div>
       </div>
 
@@ -317,7 +256,6 @@ const Transactions: React.FC = () => {
         </p>
       )}
 
-      {/* Transaction form */}
       <div className="glass-panel-static page-content">
         <h3 style={{ marginBottom: '1rem' }}>Log New Transaction</h3>
         <form onSubmit={handleAddTransaction} className="form-inline">
@@ -329,9 +267,7 @@ const Transactions: React.FC = () => {
             <label className="form-label">Property</label>
             <select value={propertyId} onChange={(e) => setPropertyId(e.target.value)} required className="form-input">
               <option value="">Select a property...</option>
-              {properties.map((p) => (
-                <option key={p.id} value={p.id}>{p.address}</option>
-              ))}
+              {properties.map((p) => <option key={p.id} value={p.id}>{p.address}</option>)}
             </select>
           </div>
           <div className="form-group">
@@ -343,36 +279,18 @@ const Transactions: React.FC = () => {
           </div>
           <div className="form-group">
             <label className="form-label">Category</label>
-            <input
-              type="text"
-              placeholder="e.g. Rent, Maintenance"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              required
-              className="form-input"
-            />
+            <input type="text" placeholder="e.g. Rent, Maintenance" value={category}
+              onChange={(e) => setCategory(e.target.value)} required className="form-input" />
           </div>
           <div className="form-group">
             <label className="form-label">Amount</label>
-            <input
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-              className="form-input"
-            />
+            <input type="number" step="0.01" placeholder="0.00" value={amount}
+              onChange={(e) => setAmount(e.target.value)} required className="form-input" />
           </div>
           <div className="form-group">
             <label className="form-label">Description</label>
-            <input
-              type="text"
-              placeholder="Optional note"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="form-input"
-            />
+            <input type="text" placeholder="Optional note" value={description}
+              onChange={(e) => setDescription(e.target.value)} className="form-input" />
           </div>
           <div className="form-group">
             <label className="form-label">Status</label>
@@ -383,32 +301,19 @@ const Transactions: React.FC = () => {
           </div>
           <div className="form-group">
             <label className="form-label">Attach Receipt (optional)</label>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".pdf,.png,.jpg,.jpeg"
-              className="form-input"
-              style={{ paddingTop: '0.4rem' }}
-            />
+            <input type="file" ref={fileInputRef} accept=".pdf,.png,.jpg,.jpeg"
+              className="form-input" style={{ paddingTop: '0.4rem' }} />
           </div>
-          <button type="submit" className="btn btn-primary" style={{ height: '40px' }}>
-            Add Transaction
-          </button>
+          <button type="submit" className="btn btn-primary" style={{ height: '40px' }}>Add Transaction</button>
         </form>
       </div>
 
-      {/* Transactions table */}
       <div className="glass-panel-static" style={{ overflowX: 'auto', marginTop: '1.25rem' }}>
         <table className="data-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Property</th>
-              <th>Type</th>
-              <th>Category</th>
-              <th>Amount</th>
-              <th>Status</th>
-              <th>Docs</th>
+              <th>Date</th><th>Property</th><th>Type</th><th>Category</th>
+              <th>Amount</th><th>Status</th><th>Docs</th>
             </tr>
           </thead>
           <tbody>
@@ -420,7 +325,7 @@ const Transactions: React.FC = () => {
                 <td>
                   <span title={tx.description || undefined}>{tx.category}</span>
                   {tx.description && (
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.1rem' }}>
                       {tx.description.length > 50 ? tx.description.slice(0, 50) + '…' : tx.description}
                     </div>
                   )}
@@ -431,12 +336,9 @@ const Transactions: React.FC = () => {
                 <td>{statusBadge(tx.status)}</td>
                 <td>
                   {tx.documentCount > 0 ? (
-                    <button
-                      className="btn"
-                      onClick={() => openDocModal(tx.id)}
+                    <button className="btn" onClick={() => openDocModal(tx.id)}
                       title={`View ${tx.documentCount} document${tx.documentCount !== 1 ? 's' : ''}`}
-                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.8rem', color: 'var(--accent-purple)' }}
-                    >
+                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.8rem', color: 'var(--accent-purple)' }}>
                       {tx.documentCount}
                     </button>
                   ) : (
@@ -462,39 +364,26 @@ const Transactions: React.FC = () => {
         </table>
       </div>
 
-      {docModalTxId !== null && (
-        <div style={overlayStyle} onClick={() => setDocModalTxId(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Documents</h2>
-              <button className="btn" style={{ padding: '0.25rem 0.75rem' }} onClick={() => setDocModalTxId(null)}>Close</button>
-            </div>
-            {docModalLoading ? (
-              <p style={{ color: 'var(--text-muted)' }}>Loading…</p>
-            ) : docModalDocs.length === 0 ? (
-              <p style={{ color: 'var(--text-muted)' }}>No documents found.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {docModalDocs.map((doc) => (
-                  <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', gap: '0.5rem' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 500, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.filename}</div>
-                      {doc.sizeBytes && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{(doc.sizeBytes / 1024).toFixed(1)} KB</div>}
-                    </div>
-                    <button
-                      className="btn btn-primary"
-                      style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', flexShrink: 0 }}
-                      onClick={() => downloadDoc(doc.id, doc.filename)}
-                    >
-                      Download
-                    </button>
-                  </div>
-                ))}
+      <Modal open={docModalTxId !== null} onClose={() => setDocModalTxId(null)} title="Documents" maxWidth={480}>
+        {docModalLoading ? (
+          <p style={{ color: 'var(--text-secondary)' }}>Loading…</p>
+        ) : docModalDocs.length === 0 ? (
+          <p style={{ color: 'var(--text-secondary)' }}>No documents found.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {docModalDocs.map((doc) => (
+              <div key={doc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem', borderRadius: '8px', background: 'var(--bg-tertiary)', gap: '0.5rem' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.filename}</div>
+                  {doc.sizeBytes && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{(doc.sizeBytes / 1024).toFixed(1)} KB</div>}
+                </div>
+                <button className="btn btn-primary" style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', flexShrink: 0 }}
+                  onClick={() => downloadDoc(doc.id, doc.filename)}>Download</button>
               </div>
-            )}
+            ))}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </div>
   );
 };
