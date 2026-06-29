@@ -1,4 +1,22 @@
 services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: elara
+      POSTGRES_PASSWORD: elara_password
+      POSTGRES_DB: elara_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
@@ -7,6 +25,30 @@ services:
       - RE_PORTFOLIO_JWT_SECRET=${RE_PORTFOLIO_JWT_SECRET}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - RAPIDAPI_KEY=${RAPIDAPI_KEY:-}
+      - DATABASE_URL=postgresql://elara:elara_password@db/elara_db
+      - REDIS_URL=redis://redis:6379/0
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: celery -A worker.celery_app worker --loglevel=info
+    environment:
+      - RE_PORTFOLIO_JWT_SECRET=${RE_PORTFOLIO_JWT_SECRET}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY:-}
+      - DATABASE_URL=postgresql://elara:elara_password@db/elara_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
     volumes:
       - ./backend:/app
     restart: unless-stopped
@@ -21,3 +63,6 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  postgres_data:

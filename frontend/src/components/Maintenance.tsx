@@ -1,66 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
-import type { MaintenanceRequest, PropertyOption, TenantOption } from '../types';
-import { notify } from '../toast';
-import Modal from './ui/Modal';
 
-interface FormData {
-  property_id: string;
-  tenant_id: string;
+interface MaintenanceRequest {
+  id: number;
+  property_id: number;
+  tenant_id: number | null;
   title: string;
   description: string;
   status: string;
   priority: string;
 }
 
-const EMPTY_FORM: FormData = {
-  property_id: '',
-  tenant_id: '',
-  title: '',
-  description: '',
-  status: 'Open',
-  priority: 'Normal',
-};
-
-const PRIORITY_COLORS: Record<string, string> = {
-  Low: 'var(--text-muted)',
-  Normal: 'var(--accent-blue)',
-  High: 'var(--warning)',
-  Urgent: 'var(--danger)',
-};
-
-const STATUS_CLASSES: Record<string, string> = {
-  Open: 'badge badge-warning',
-  'In Progress': 'badge badge-info',
-  Resolved: 'badge badge-success',
-  Closed: 'badge',
-};
+interface PropertyOption {
+  id: number;
+  address: string;
+}
 
 const Maintenance: React.FC = () => {
   const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
   const [properties, setProperties] = useState<PropertyOption[]>([]);
-  const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState('All');
 
-  const [showModal, setShowModal] = useState(false);
-  const [editingRequest, setEditingRequest] = useState<MaintenanceRequest | null>(null);
-  const [form, setForm] = useState<FormData>(EMPTY_FORM);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [propertyId, setPropertyId] = useState('');
+  const [priority, setPriority] = useState('Normal');
+  const [status, setStatus] = useState('Open');
   const [submitting, setSubmitting] = useState(false);
-
-  const [suggestingFor, setSuggestingFor] = useState<number | null>(null);
-  const [suggestions, setSuggestions] = useState<Record<number, { priority: string; reasoning: string }>>({});
 
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/maintenance?limit=500');
+      const res = await authFetch('/api/maintenance');
       if (!res.ok) throw new Error('Failed to fetch maintenance requests');
       const data = await res.json();
-      setRequests(data.items ?? data);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setRequests(data);
+    } catch (err: any) {
+      setError(err.message || 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -68,347 +45,153 @@ const Maintenance: React.FC = () => {
 
   useEffect(() => {
     fetchRequests();
-    authFetch('/api/properties?limit=500')
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => setProperties(d.items ?? d))
-      .catch(() => {});
-    authFetch('/api/tenants?limit=500')
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d) => setTenants(d.items ?? d))
+    authFetch('/api/properties')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setProperties(data))
       .catch(() => {});
   }, []);
 
-  const openAdd = () => {
-    setEditingRequest(null);
-    setForm(EMPTY_FORM);
-    setShowModal(true);
-  };
-
-  const openEdit = (req: MaintenanceRequest) => {
-    setEditingRequest(req);
-    setForm({
-      property_id: String(req.propertyId),
-      tenant_id: req.tenantId != null ? String(req.tenantId) : '',
-      title: req.title,
-      description: req.description || '',
-      status: req.status,
-      priority: req.priority,
-    });
-    setShowModal(true);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!propertyId) {
+      alert('Please select a property');
+      return;
+    }
     setSubmitting(true);
-    const payload = {
-      property_id: parseInt(form.property_id, 10),
-      tenant_id: form.tenant_id ? parseInt(form.tenant_id, 10) : null,
-      title: form.title,
-      description: form.description || null,
-      status: form.status,
-      priority: form.priority,
-    };
     try {
-      const res = editingRequest
-        ? await authFetch(`/api/maintenance/${editingRequest.id}`, {
-            method: 'PUT',
-            body: JSON.stringify(payload),
-          })
-        : await authFetch('/api/maintenance', { method: 'POST', body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error('Failed to save request');
-      setShowModal(false);
-      notify.success(editingRequest ? 'Request updated' : 'Request created');
+      const res = await authFetch('/api/maintenance', {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          description,
+          property_id: parseInt(propertyId, 10),
+          priority,
+          status,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create request');
+      
+      setTitle('');
+      setDescription('');
+      setPropertyId('');
+      setPriority('Normal');
+      setStatus('Open');
       fetchRequests();
-    } catch (err: unknown) {
-      notify.error(err instanceof Error ? err.message : 'Save failed');
+    } catch (err: any) {
+      alert('Error: ' + (err.message || 'Unknown error'));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleSuggestPriority = async (req: MaintenanceRequest) => {
-    setSuggestingFor(req.id);
-    try {
-      const res = await authFetch('/api/agents/suggest-priority', {
-        method: 'POST',
-        body: JSON.stringify({ title: req.title, description: req.description }),
-      });
-      if (!res.ok) throw new Error('Suggestion failed');
-      const data: { priority: string; reasoning: string } = await res.json();
-      setSuggestions((prev) => ({ ...prev, [req.id]: data }));
-      notify.success('Priority suggestion ready');
-    } catch (err: unknown) {
-      notify.error(err instanceof Error ? err.message : 'Suggestion failed');
-    } finally {
-      setSuggestingFor(null);
-    }
-  };
+  if (loading && requests.length === 0) {
+    return <div className="app-container"><div className="loading-container fade-in">Loading Maintenance...</div></div>;
+  }
 
-  const handleApplySuggestion = async (req: MaintenanceRequest, priority: string) => {
-    try {
-      const res = await authFetch(`/api/maintenance/${req.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ priority }),
-      });
-      if (!res.ok) throw new Error('Failed to update priority');
-      setSuggestions((prev) => {
-        const next = { ...prev };
-        delete next[req.id];
-        return next;
-      });
-      notify.success('Priority updated');
-      fetchRequests();
-    } catch (err: unknown) {
-      notify.error(err instanceof Error ? err.message : 'Update failed');
-    }
-  };
-
-  const propName = (id: number) =>
-    properties.find((p) => p.id === id)?.address || `Property ${id}`;
-
-  const filtered = requests.filter(
-    (r) => statusFilter === 'All' || r.status === statusFilter
-  );
-
-  if (loading) {
+  if (error) {
     return (
-      <div className="page-container">
-        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-          Loading…
+      <div className="app-container fade-in">
+        <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
+          <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
+          <p>{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="page-container">
+    <div className="app-container fade-in">
       <div className="page-header">
-        <div>
-          <h1 className="page-title">Maintenance</h1>
-          <p className="page-subtitle">Track and manage maintenance requests across your portfolio</p>
+        <div className="page-header-info">
+          <h1 className="text-gradient">Maintenance</h1>
+          <p>Manage property maintenance requests.</p>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>
-          + New Request
-        </button>
       </div>
 
-      {error && (
-        <div className="glass-panel-static" style={{ color: 'var(--danger)', marginBottom: '1rem' }}>
-          {error}
-        </div>
-      )}
-
-      <div className="glass-panel-static" style={{ marginBottom: '1.5rem', display: 'flex', gap: '0.5rem' }}>
-        {['All', 'Open', 'In Progress', 'Resolved', 'Closed'].map((s) => (
-          <button
-            key={s}
-            className={statusFilter === s ? 'btn btn-primary' : 'btn'}
-            style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}
-            onClick={() => setStatusFilter(s)}
-          >
-            {s}
+      <div className="glass-panel-static page-content">
+        <h3 style={{ marginBottom: '1rem' }}>Log New Request</h3>
+        <form onSubmit={handleSubmit} className="form-inline">
+          <div className="form-group">
+            <label className="form-label">Property</label>
+            <select value={propertyId} onChange={(e) => setPropertyId(e.target.value)} required className="form-input">
+              <option value="">Select a property...</option>
+              {properties.map((p) => (
+                <option key={p.id} value={p.id}>{p.address}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Title</label>
+            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} required className="form-input" placeholder="e.g. Broken AC" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Priority</label>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)} className="form-input">
+              <option value="Low">Low</option>
+              <option value="Normal">Normal</option>
+              <option value="High">High</option>
+              <option value="Urgent">Urgent</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Status</label>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input">
+              <option value="Open">Open</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ width: '100%', marginTop: '0.5rem' }}>
+            <label className="form-label">Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} required className="form-input" style={{ width: '100%' }} />
+          </div>
+          <button type="submit" className="btn btn-primary" style={{ height: '40px', marginTop: '0.5rem' }} disabled={submitting}>
+            {submitting ? 'Adding...' : 'Add Request'}
           </button>
-        ))}
+        </form>
       </div>
 
-      <div className="glass-panel-static">
-        {filtered.length === 0 ? (
-          <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>
-            No maintenance requests {statusFilter !== 'All' ? `with status "${statusFilter}"` : ''}.
-          </p>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Property</th>
-                <th>Title</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Created</th>
-                <th>Actions</th>
+      <div className="glass-panel-static" style={{ overflowX: 'auto', marginTop: '1.25rem' }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Title</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Priority</th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((r) => (
+              <tr key={r.id}>
+                <td>#{r.id}</td>
+                <td style={{ fontWeight: 500 }}>{r.title}</td>
+                <td>{r.description}</td>
+                <td>
+                  <span className={`badge ${r.status === 'Completed' ? 'badge-success' : r.status === 'Open' ? 'badge-danger' : 'badge-warning'}`}>
+                    {r.status}
+                  </span>
+                </td>
+                <td>
+                  <span className={`badge ${r.priority === 'Urgent' || r.priority === 'High' ? 'badge-danger' : 'badge-warning'}`}>
+                    {r.priority}
+                  </span>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filtered.map((req) => {
-                const suggestion = suggestions[req.id];
-                return (
-                  <tr key={req.id}>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      {propName(req.propertyId)}
-                    </td>
-                    <td>
-                      <strong>{req.title}</strong>
-                      {req.description && (
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                          {req.description}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span className={STATUS_CLASSES[req.status] || 'badge'}>{req.status}</span>
-                    </td>
-                    <td>
-                      <span style={{ color: PRIORITY_COLORS[req.priority] || 'inherit', fontWeight: 600 }}>
-                        {req.priority}
-                      </span>
-                      {suggestion && (
-                        <div style={{ marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                          AI suggests:{' '}
-                          <strong style={{ color: PRIORITY_COLORS[suggestion.priority] }}>
-                            {suggestion.priority}
-                          </strong>{' '}
-                          — {suggestion.reasoning}
-                          <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.4rem' }}>
-                            <button
-                              className="btn"
-                              style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
-                              onClick={() => handleApplySuggestion(req, suggestion.priority)}
-                            >
-                              Apply
-                            </button>
-                            <button
-                              className="btn"
-                              style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem' }}
-                              onClick={() =>
-                                setSuggestions((prev) => {
-                                  const n = { ...prev };
-                                  delete n[req.id];
-                                  return n;
-                                })
-                              }
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                      {req.createdAt ? new Date(req.createdAt).toLocaleDateString() : '—'}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                        <button
-                          className="btn"
-                          style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
-                          onClick={() => openEdit(req)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
-                          disabled={suggestingFor === req.id}
-                          onClick={() => handleSuggestPriority(req)}
-                        >
-                          {suggestingFor === req.id ? 'Thinking…' : 'AI Priority'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+            ))}
+            {requests.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  <div className="empty-state">
+                    <h3>No maintenance requests</h3>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
-
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editingRequest ? 'Edit Request' : 'New Maintenance Request'}>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                  Property *
-                </label>
-                <select
-                  required
-                  value={form.property_id}
-                  onChange={(e) => setForm((f) => ({ ...f, property_id: e.target.value }))}
-                  style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)' }}
-                >
-                  <option value="">Select property</option>
-                  {properties.map((p) => (
-                    <option key={p.id} value={p.id}>{p.address}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                  Tenant (optional)
-                </label>
-                <select
-                  value={form.tenant_id}
-                  onChange={(e) => setForm((f) => ({ ...f, tenant_id: e.target.value }))}
-                  style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)' }}
-                >
-                  <option value="">None</option>
-                  {tenants.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                  Title *
-                </label>
-                <input
-                  required
-                  type="text"
-                  value={form.title}
-                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                  placeholder="e.g. HVAC repair needed"
-                  style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)', boxSizing: 'border-box' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                  Description
-                </label>
-                <textarea
-                  rows={3}
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                  placeholder="Describe the issue..."
-                  style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                    Status
-                  </label>
-                  <select
-                    value={form.status}
-                    onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)' }}
-                  >
-                    {['Open', 'In Progress', 'Resolved', 'Closed'].map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '0.3rem', fontSize: '0.9rem', fontWeight: 500 }}>
-                    Priority
-                  </label>
-                  <select
-                    value={form.priority}
-                    onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'var(--bg-primary)' }}
-                  >
-                    {['Low', 'Normal', 'High', 'Urgent'].map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
-                <button type="button" className="btn" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? 'Saving…' : editingRequest ? 'Update' : 'Create'}
-                </button>
-              </div>
-            </form>
-      </Modal>
     </div>
   );
 };

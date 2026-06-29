@@ -1,7 +1,18 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, DateTime, BigInteger
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, DateTime, BigInteger, Table, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+    role = Column(String, default="Viewer") # Owner, Manager, Viewer
+
+    user = relationship("User", back_populates="roles")
+    organization = relationship("Organization", back_populates="members")
 
 
 class User(Base):
@@ -11,6 +22,38 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     account_type = Column(String, default="admin")
+    
+    # Billing fields
+    stripe_customer_id = Column(String, nullable=True)
+    subscription_status = Column(String, default="inactive") # e.g. inactive, active, past_due, canceled
+    subscription_tier = Column(String, default="free") # e.g. Basic, Pro, Enterprise
+
+    roles = relationship("UserRole", back_populates="user")
+    tenants = relationship("Tenant", back_populates="user") # For tenant users
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+
+    members = relationship("UserRole", back_populates="organization")
+    portfolios = relationship("Portfolio", back_populates="organization")
+    properties = relationship("Property", back_populates="organization")
+    tenants = relationship("Tenant", back_populates="organization")
+    transactions = relationship("Transaction", back_populates="organization")
+
+
+class Portfolio(Base):
+    __tablename__ = "portfolios"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+
+    organization = relationship("Organization", back_populates="portfolios")
+    properties = relationship("Property", back_populates="portfolio")
 
 
 class Property(Base):
@@ -22,7 +65,12 @@ class Property(Base):
     purchase_price = Column(Float)
     purchase_date = Column(Date)
     status = Column(String, default="Active")
+    
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=True)
 
+    organization = relationship("Organization", back_populates="properties")
+    portfolio = relationship("Portfolio", back_populates="properties")
     tenants = relationship("Tenant", back_populates="property")
     transactions = relationship("Transaction", back_populates="property")
     mortgage = relationship("Mortgage", back_populates="property", uselist=False)
@@ -38,6 +86,8 @@ class Tenant(Base):
     phone = Column(String)
     property_id = Column(Integer, ForeignKey("properties.id"))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+    
     lease_start = Column(Date)
     lease_end = Column(Date)
     rent_amount = Column(Float)
@@ -46,6 +96,8 @@ class Tenant(Base):
     background_check_status = Column(String, nullable=True)
 
     property = relationship("Property", back_populates="tenants")
+    user = relationship("User", back_populates="tenants")
+    organization = relationship("Organization", back_populates="tenants")
 
 
 class MaintenanceRequest(Base):
@@ -69,6 +121,8 @@ class Transaction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(Integer, ForeignKey("properties.id"))
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+    
     transaction_date = Column(Date)
     amount = Column(Float)
     category = Column(String)  # e.g., Rent, Maintenance, Mortgage, Taxes
@@ -77,6 +131,7 @@ class Transaction(Base):
     status = Column(String, default="Paid")
 
     property = relationship("Property", back_populates="transactions")
+    organization = relationship("Organization", back_populates="transactions")
     documents = relationship("Document", back_populates="transaction")
 
 

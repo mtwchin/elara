@@ -1,9 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '../auth';
-import type { PropertyOption } from '../types';
-import { notify } from '../toast';
-import Modal from './ui/Modal';
-import ConfirmDialog from './ui/ConfirmDialog';
 
 interface Tenant {
   id: number;
@@ -17,6 +13,11 @@ interface Tenant {
   rentAmount: number | null;
   intent: string;
   daysUntilLeaseEnd: number | null;
+}
+
+interface PropertyOption {
+  id: number;
+  address: string;
 }
 
 interface TenantFormData {
@@ -37,8 +38,37 @@ interface RenewalLetterResult {
 }
 
 const EMPTY_TENANT_FORM: TenantFormData = {
-  name: '', email: '', phone: '', property_id: '',
-  lease_start: '', lease_end: '', rent_amount: '', intent: 'Undecided',
+  name: '',
+  email: '',
+  phone: '',
+  property_id: '',
+  lease_start: '',
+  lease_end: '',
+  rent_amount: '',
+  intent: 'Undecided',
+};
+
+const overlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 1000,
+  background: 'rgba(0,0,0,0.4)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+const modalStyle: React.CSSProperties = {
+  background: 'var(--glass-bg)',
+  backdropFilter: 'blur(12px)',
+  borderRadius: '16px',
+  border: '1px solid var(--glass-border)',
+  padding: '2rem',
+  width: '100%',
+  maxWidth: '520px',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+  maxHeight: '90vh',
+  overflowY: 'auto',
 };
 
 const TODAY = new Date('2026-06-17');
@@ -58,24 +88,24 @@ const Tenants: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
+  // Tenant modal
   const [showTenantModal, setShowTenantModal] = useState(false);
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [tenantForm, setTenantForm] = useState<TenantFormData>(EMPTY_TENANT_FORM);
   const [tenantSubmitting, setTenantSubmitting] = useState(false);
 
+  // Renewal letter modal
   const [renewalLoading, setRenewalLoading] = useState<number | null>(null);
   const [renewalResult, setRenewalResult] = useState<RenewalLetterResult | null>(null);
   const [showRenewalModal, setShowRenewalModal] = useState(false);
 
-  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-
   const fetchTenants = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/tenants?limit=500');
+      const res = await authFetch('/api/tenants');
       if (!res.ok) throw new Error('Failed to fetch tenants');
-      const data = await res.json();
-      setTenants(data.items ?? data);
+      const data: Tenant[] = await res.json();
+      setTenants(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -85,9 +115,9 @@ const Tenants: React.FC = () => {
 
   useEffect(() => {
     fetchTenants();
-    authFetch('/api/properties?limit=500')
-      .then((res) => (res.ok ? res.json() : { items: [] }))
-      .then((data) => setProperties(data.items ?? data))
+    authFetch('/api/properties')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: PropertyOption[]) => setProperties(data))
       .catch(() => {});
   }, []);
 
@@ -113,15 +143,13 @@ const Tenants: React.FC = () => {
   };
 
   const handleDeleteTenant = async (id: number) => {
+    if (!window.confirm('Delete this tenant? This cannot be undone.')) return;
     try {
       const res = await authFetch(`/api/tenants/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Failed to delete tenant');
       setTenants((prev) => prev.filter((t) => t.id !== id));
-      notify.success('Tenant removed');
     } catch (err: unknown) {
-      notify.error(err instanceof Error ? err.message : 'Delete failed');
-    } finally {
-      setConfirmDelete(null);
+      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -144,10 +172,9 @@ const Tenants: React.FC = () => {
         : await authFetch('/api/tenants', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) throw new Error('Failed to save tenant');
       setShowTenantModal(false);
-      notify.success(editingTenant ? 'Tenant updated' : 'Tenant added');
       fetchTenants();
     } catch (err: unknown) {
-      notify.error(err instanceof Error ? err.message : 'Save failed');
+      alert('Error: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setTenantSubmitting(false);
     }
@@ -167,31 +194,44 @@ const Tenants: React.FC = () => {
       const data: RenewalLetterResult = await res.json();
       setRenewalResult(data);
       setShowRenewalModal(true);
-      notify.success('Renewal letter drafted');
     } catch (err: unknown) {
-      notify.error('Error drafting renewal: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      alert('Error drafting renewal: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setRenewalLoading(null);
     }
   };
 
-  if (loading) return <div className="app-container"><div className="loading-container fade-in">Loading Tenants...</div></div>;
-  if (error) return (
-    <div className="app-container fade-in">
-      <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
-        <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
-        <p>{error}</p>
+  if (loading) {
+    return (
+      <div className="app-container">
+        <div className="loading-container fade-in">Loading Tenants...</div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="app-container fade-in">
+        <div className="glass-panel" style={{ textAlign: 'center', maxWidth: '600px', margin: '4rem auto' }}>
+          <h2 style={{ color: 'var(--danger)', marginBottom: '1rem' }}>Error</h2>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   const intentBadge = (intent: string) => {
-    const variant = intent === 'Renew' ? 'badge-success' : intent === 'Vacate' ? 'badge-danger' : 'badge-warning';
+    const variant =
+      intent === 'Renew' ? 'badge-success' :
+      intent === 'Vacate' ? 'badge-danger' :
+      'badge-warning';
     return <span className={`badge ${variant}`}>{intent}</span>;
   };
 
   const filteredTenants = tenants.filter((t) =>
-    [t.name, t.email, t.propertyAssigned].some((v) => (v || '').toLowerCase().includes(search.toLowerCase()))
+    [t.name, t.email, t.propertyAssigned].some((v) =>
+      (v || '').toLowerCase().includes(search.toLowerCase())
+    )
   );
 
   return (
@@ -202,8 +242,14 @@ const Tenants: React.FC = () => {
           <p>Manage your renters and leases.</p>
         </div>
         <div className="page-header-actions">
-          <input type="text" className="form-input" placeholder="Search..." value={search}
-            onChange={(e) => setSearch(e.target.value)} style={{ width: '220px' }} />
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: '220px' }}
+          />
           <button className="btn btn-primary" onClick={openAddTenant}>Add Tenant</button>
         </div>
       </div>
@@ -218,13 +264,20 @@ const Tenants: React.FC = () => {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Name</th><th>Contact</th><th>Property</th><th>Lease Period</th>
-              <th>Rent</th><th>Intent</th><th>Actions</th>
+              <th>Name</th>
+              <th>Contact</th>
+              <th>Property</th>
+              <th>Lease Period</th>
+              <th>Rent</th>
+              <th>Intent</th>
+              <th>Screening</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredTenants.map((tenant) => {
-              const showRenewalCta = isWithin90Days(tenant.leaseEnd) && tenant.intent !== 'Vacate';
+              const showRenewalCta =
+                isWithin90Days(tenant.leaseEnd) && tenant.intent !== 'Vacate';
               return (
                 <tr key={tenant.id}>
                   <td style={{ fontWeight: 500 }}>{tenant.name}</td>
@@ -233,8 +286,14 @@ const Tenants: React.FC = () => {
                     <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{tenant.phone}</div>
                   </td>
                   <td>{tenant.propertyAssigned}</td>
-                  <td>{tenant.leaseStart} {tenant.leaseStart && tenant.leaseEnd ? '→' : ''} {tenant.leaseEnd}</td>
-                  <td>{tenant.rentAmount != null ? `$${tenant.rentAmount.toLocaleString()}` : '—'}</td>
+                  <td>
+                    {tenant.leaseStart} {tenant.leaseStart && tenant.leaseEnd ? '→' : ''} {tenant.leaseEnd}
+                  </td>
+                  <td>
+                    {tenant.rentAmount != null
+                      ? `$${tenant.rentAmount.toLocaleString()}`
+                      : '—'}
+                  </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                       {intentBadge(tenant.intent)}
@@ -252,10 +311,20 @@ const Tenants: React.FC = () => {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button className="btn" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
-                        onClick={() => openEditTenant(tenant)}>Edit</button>
-                      <button className="btn" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
-                        onClick={() => setConfirmDelete(tenant.id)}>Delete</button>
+                      <button
+                        className="btn"
+                        style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+                        onClick={() => openEditTenant(tenant)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn"
+                        style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
+                        onClick={() => handleDeleteTenant(tenant.id)}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -278,87 +347,149 @@ const Tenants: React.FC = () => {
         </table>
       </div>
 
-      <ConfirmDialog
-        open={confirmDelete !== null}
-        title="Remove Tenant"
-        message="Are you sure you want to remove this tenant? This cannot be undone."
-        confirmLabel="Remove"
-        danger
-        onConfirm={() => confirmDelete !== null && handleDeleteTenant(confirmDelete)}
-        onCancel={() => setConfirmDelete(null)}
-      />
+      {/* Tenant add/edit modal */}
+      {showTenantModal && (
+        <div style={overlayStyle} onClick={() => setShowTenantModal(false)}>
+          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginBottom: '1.5rem' }}>{editingTenant ? 'Edit Tenant' : 'Add Tenant'}</h2>
+            <form onSubmit={handleTenantSubmit}>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Name</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  required
+                  value={tenantForm.name}
+                  onChange={(e) => setTenantForm({ ...tenantForm, name: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Email</label>
+                <input
+                  type="email"
+                  className="form-input"
+                  value={tenantForm.email}
+                  onChange={(e) => setTenantForm({ ...tenantForm, email: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Phone</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={tenantForm.phone}
+                  onChange={(e) => setTenantForm({ ...tenantForm, phone: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Property</label>
+                <select
+                  className="form-input"
+                  required
+                  value={tenantForm.property_id}
+                  onChange={(e) => setTenantForm({ ...tenantForm, property_id: e.target.value })}
+                >
+                  <option value="">Select a property...</option>
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.address}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Lease Start</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={tenantForm.lease_start}
+                  onChange={(e) => setTenantForm({ ...tenantForm, lease_start: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Lease End</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  value={tenantForm.lease_end}
+                  onChange={(e) => setTenantForm({ ...tenantForm, lease_end: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1rem' }}>
+                <label className="form-label">Rent Amount ($)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  min="0"
+                  step="0.01"
+                  value={tenantForm.rent_amount}
+                  onChange={(e) => setTenantForm({ ...tenantForm, rent_amount: e.target.value })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Intent</label>
+                <select
+                  className="form-input"
+                  value={tenantForm.intent}
+                  onChange={(e) => setTenantForm({ ...tenantForm, intent: e.target.value })}
+                >
+                  <option value="Renew">Renew</option>
+                  <option value="Undecided">Undecided</option>
+                  <option value="Vacate">Vacate</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => setShowTenantModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={tenantSubmitting}>
+                  {tenantSubmitting ? 'Saving...' : 'Save Tenant'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
-      <Modal open={showTenantModal} onClose={() => setShowTenantModal(false)} title={editingTenant ? 'Edit Tenant' : 'Add Tenant'}>
-        <form onSubmit={handleTenantSubmit}>
-          {(['name', 'email', 'phone'] as const).map((field) => (
-            <div key={field} className="form-group" style={{ marginBottom: '1rem' }}>
-              <label className="form-label">{field.charAt(0).toUpperCase() + field.slice(1)}</label>
-              <input type={field === 'email' ? 'email' : 'text'} className="form-input"
-                required={field === 'name'} value={tenantForm[field]}
-                onChange={(e) => setTenantForm({ ...tenantForm, [field]: e.target.value })} />
+      {/* Renewal letter modal */}
+      {showRenewalModal && renewalResult && (
+        <div style={overlayStyle} onClick={() => setShowRenewalModal(false)}>
+          <div
+            style={{ ...modalStyle, maxWidth: '640px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+              <h2>Lease Renewal Letter</h2>
+              <button className="btn" style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }} onClick={() => setShowRenewalModal(false)}>
+                Close
+              </button>
             </div>
-          ))}
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label className="form-label">Property</label>
-            <select className="form-input" required value={tenantForm.property_id}
-              onChange={(e) => setTenantForm({ ...tenantForm, property_id: e.target.value })}>
-              <option value="">Select a property...</option>
-              {properties.map((p) => <option key={p.id} value={p.id}>{p.address}</option>)}
-            </select>
-          </div>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label className="form-label">Lease Start</label>
-            <input type="date" className="form-input" value={tenantForm.lease_start}
-              onChange={(e) => setTenantForm({ ...tenantForm, lease_start: e.target.value })} />
-          </div>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label className="form-label">Lease End</label>
-            <input type="date" className="form-input" value={tenantForm.lease_end}
-              onChange={(e) => setTenantForm({ ...tenantForm, lease_end: e.target.value })} />
-          </div>
-          <div className="form-group" style={{ marginBottom: '1rem' }}>
-            <label className="form-label">Rent Amount ($)</label>
-            <input type="number" className="form-input" min="0" step="0.01" value={tenantForm.rent_amount}
-              onChange={(e) => setTenantForm({ ...tenantForm, rent_amount: e.target.value })} />
-          </div>
-          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-            <label className="form-label">Intent</label>
-            <select className="form-input" value={tenantForm.intent}
-              onChange={(e) => setTenantForm({ ...tenantForm, intent: e.target.value })}>
-              <option value="Renew">Renew</option>
-              <option value="Undecided">Undecided</option>
-              <option value="Vacate">Vacate</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button type="button" className="btn" onClick={() => setShowTenantModal(false)}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={tenantSubmitting}>
-              {tenantSubmitting ? 'Saving...' : 'Save Tenant'}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal open={showRenewalModal} onClose={() => setShowRenewalModal(false)} title="Lease Renewal Letter" maxWidth={640}>
-        {renewalResult && (
-          <>
             {renewalResult.suggested_rent && (
               <p style={{ marginBottom: '1rem' }}>
                 Suggested Rent: <strong>${renewalResult.suggested_rent.toLocaleString()}/mo</strong>
               </p>
             )}
-            <pre style={{
-              whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: '0.9rem', lineHeight: 1.6,
-              background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '1rem',
-              marginBottom: '1.25rem', maxHeight: '50vh', overflowY: 'auto',
-            }}>
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'inherit',
+                fontSize: '0.9rem',
+                lineHeight: 1.6,
+                background: 'var(--bg-tertiary)',
+                borderRadius: '8px',
+                padding: '1rem',
+                marginBottom: '1.25rem',
+                maxHeight: '50vh',
+                overflowY: 'auto',
+              }}
+            >
               {renewalResult.letter}
             </pre>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => {
-                navigator.clipboard.writeText(renewalResult.letter);
-                notify.success('Copied to clipboard');
-              }}>Copy to Clipboard</button>
+              <button
+                className="btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(renewalResult.letter);
+                }}
+              >
+                Copy to Clipboard
+              </button>
               <a
                 className="btn btn-primary"
                 href={`mailto:${renewalResult.tenant?.email || ''}?subject=${encodeURIComponent('Lease Renewal — ' + (renewalResult.tenant?.propertyAssigned || ''))}&body=${encodeURIComponent(renewalResult.letter)}`}
@@ -367,9 +498,9 @@ const Tenants: React.FC = () => {
                 Send via Email
               </a>
             </div>
-          </>
-        )}
-      </Modal>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

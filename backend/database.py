@@ -1,11 +1,24 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from dotenv import load_dotenv
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./portfolio.db"
+load_dotenv()
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+# Read from env, fallback to sqlite if somehow env var isn't set
+SQLALCHEMY_DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./portfolio.db")
+
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    )
+else:
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, 
+        pool_size=10, 
+        max_overflow=20
+    )
+    
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

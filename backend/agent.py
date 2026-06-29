@@ -1,17 +1,24 @@
 """Real-estate analyst agent.
 
-Layers:
-1. Rule-based `generate_insights(db)` — deterministic dashboard alerts.
-2. Specialist Agent classes (BaseAgent subclasses) — each wraps a single
-   Gemini call or a sub-agent composition chain.
-3. Orchestrator agents — chain multiple specialist agents.
-4. `AgentOrchestrator` singleton — entry point for all AI workflows.
-5. Legacy free functions preserved for backward-compatible route calls.
+Two layers:
+1. Rule-based `generate_insights(db)` — runs against the live DB on every
+   dashboard load and produces deterministic, data-driven alerts. This is the
+   primary input to /api/dashboard.
+2. `draft_renewal_letter(tenant_id, db)` — calls Gemini via the Google
+   Generative AI SDK to draft a professional lease renewal letter.
+   Returns a dict with `letter_text`, `suggested_rent`, and `market_context`.
+   Gracefully returns a 503-style error dict when GOOGLE_API_KEY is absent.
+3. `extract_document_data(storage_path)` — calls Gemini Vision to extract
+   structured fields from a receipt or invoice image/PDF.
+4. `analyze_maintenance_health(db)` — scans trailing-12-month transactions
+   for spending anomalies and returns structured alerts with AI-generated
+   human-readable descriptions.
+5. `portfolio_chat(message, history, db)` — conversational Gemini agent with
+   function calling. Queries live DB data via tools to answer portfolio questions.
 """
 
-import abc
 import os
-import json
+import base64
 import datetime
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
@@ -63,44 +70,7 @@ def _humanize_delta(target: datetime.date) -> str:
 
 
 # ---------------------------------------------------------------------------
-# BaseAgent — all specialist agents extend this
-# ---------------------------------------------------------------------------
-
-class BaseAgent(abc.ABC):
-    """Abstract base for all agents.
-
-    Contract: `run(**kwargs)` always returns a dict and never raises.
-    On failure the dict contains an "error" key so callers can branch
-    without nested try/except.
-    """
-
-    name: str = "BaseAgent"
-
-    @abc.abstractmethod
-    def run(self, **kwargs) -> Dict[str, Any]:
-        ...
-
-    def _safe_gemini_call(
-        self,
-        prompt: str,
-        system_instruction: str,
-        max_output_tokens: int = 600,
-        model_name: str = "gemini-1.5-flash",
-    ) -> str:
-        """Call Gemini and return stripped text, or raise on failure."""
-        model = _get_gemini_model(
-            system_instruction=system_instruction,
-            model_name=model_name,
-        )
-        response = model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": max_output_tokens},
-        )
-        return response.text.strip()
-
-
-# ---------------------------------------------------------------------------
-# Rule-based insights (dashboard alerts) — no AI
+# Rule-based insights (dashboard alerts)
 # ---------------------------------------------------------------------------
 
 def generate_insights(db: Session) -> List[Dict[str, Any]]:
@@ -228,382 +198,7 @@ def generate_insights(db: Session) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Specialist agents — wrap existing logic as composable classes
-# ---------------------------------------------------------------------------
-
-class RenewalLetterAgent(BaseAgent):
-    """Draft a professional lease renewal letter via Gemini."""
-
-    name = "RenewalLetterAgent"
-
-    def run(self, tenant_id: int = None, db: Session = None, market_rent: Optional[float] = None) -> Dict[str, Any]:
-        return draft_renewal_letter(tenant_id, db, market_rent)
-
-
-class PortfolioAdvisorAgent(BaseAgent):
-    """Strategic portfolio recommendations via Gemini."""
-
-    name = "PortfolioAdvisorAgent"
-
-    def run(self, db: Session = None) -> Dict[str, Any]:
-        return get_portfolio_advice(db)
-
-
-class DocumentIntelligenceAgent(BaseAgent):
-    """Extract structured fields from a receipt/invoice via Gemini Vision."""
-
-    name = "DocumentIntelligenceAgent"
-
-    def run(self, storage_path: str = None) -> Dict[str, Any]:
-        return extract_document_data(storage_path)
-
-
-class MaintenanceHealthAgent(BaseAgent):
-    """Trailing-12-month maintenance expense analysis via Gemini."""
-
-    name = "MaintenanceHealthAgent"
-
-    def run(self, db: Session = None) -> Dict[str, Any]:
-        alerts = analyze_maintenance_health(db)
-        return {"alerts": alerts, "count": len(alerts)}
-
-
-# ---------------------------------------------------------------------------
-# New specialist agents
-# ---------------------------------------------------------------------------
-
-class TransactionCategorizerAgent(BaseAgent):
-    """Classify a transaction description into a standard category."""
-
-    name = "TransactionCategorizerAgent"
-
-    VALID_CATEGORIES = [
-        "Rent", "Maintenance", "Utilities", "Insurance",
-        "Taxes", "Management", "Mortgage", "Other",
-    ]
-
-    def run(
-        self,
-        description: str = "",
-        amount: float = 0.0,
-        property_address: str = "",
-        **kwargs,
-    ) -> Dict[str, Any]:
-        fallback = {"category": "Other", "confidence": 0.0, "reasoning": "AI unavailable"}
-        if not os.environ.get("GOOGLE_API_KEY"):
-            return fallback
-
-        prompt = (
-            f"Transaction description: {description}\n"
-            f"Amount: ${amount:,.2f}\n"
-            f"Property: {property_address or 'Unknown'}\n\n"
-            "Classify into exactly one category and respond with ONLY valid JSON "
-            "(no markdown, no explanation):\n"
-            '{"category": "<one of: Rent|Maintenance|Utilities|Insurance|Taxes|Management|Mortgage|Other>", '
-            '"confidence": <0.0-1.0>, "reasoning": "<one sentence>"}'
-        )
-
-        try:
-            raw = self._safe_gemini_call(
-                prompt,
-                system_instruction=(
-                    "You are a real estate bookkeeper. Classify transactions. "
-                    "Reply with ONLY a JSON object, no markdown, no extra text."
-                ),
-                max_output_tokens=150,
-            )
-            result = json.loads(raw)
-            if result.get("category") not in self.VALID_CATEGORIES:
-                result["category"] = "Other"
-            result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.5))))
-            return result
-        except Exception as e:
-            return {**fallback, "reasoning": f"Classification failed: {str(e)}"}
-
-
-class DealScorerAgent(BaseAgent):
-    """Grade a real estate deal A–D with AI narrative."""
-
-    name = "DealScorerAgent"
-
-    def run(
-        self,
-        purchase_price: float = 0.0,
-        cap_rate: float = 0.0,
-        coc_return: float = 0.0,
-        annual_cash_flow: float = 0.0,
-        break_even_occupancy: float = 0.0,
-        noi: float = 0.0,
-        grm: float = 0.0,
-        down_payment: float = None,
-        loan_amount: float = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        fallback = {
-            "grade": "N/A",
-            "summary": "AI unavailable — check GOOGLE_API_KEY",
-            "risks": [],
-            "strengths": [],
-            "generated_at": datetime.datetime.now().isoformat(),
-        }
-        if not os.environ.get("GOOGLE_API_KEY"):
-            return fallback
-
-        prompt = (
-            f"Real estate deal metrics:\n"
-            f"- Purchase Price: ${purchase_price:,.0f}\n"
-            f"- Cap Rate: {cap_rate:.2f}%\n"
-            f"- Cash-on-Cash Return: {coc_return:.2f}%\n"
-            f"- Annual Cash Flow: ${annual_cash_flow:,.0f}\n"
-            f"- Gross Rent Multiplier: {grm:.2f}\n"
-            f"- Net Operating Income: ${noi:,.0f}\n"
-            f"- Break-Even Occupancy: {break_even_occupancy:.1f}%\n"
-            + (f"- Down Payment: ${down_payment:,.0f}\n" if down_payment else "")
-            + (f"- Loan Amount: ${loan_amount:,.0f}\n" if loan_amount else "")
-            + "\nGrading rubric: A = cap_rate >= 7 AND coc >= 10 AND positive cash flow; "
-            "B = cap_rate 5-7 OR coc 7-10; C = borderline metrics; D = negative cash flow or cap_rate < 4.\n\n"
-            "Apply the rubric AND your professional judgment. "
-            "Reply with ONLY valid JSON (no markdown):\n"
-            '{"grade": "<A|B|C|D>", "summary": "<2-3 sentence assessment>", '
-            '"strengths": ["<point>", ...], "risks": ["<point>", ...]}'
-        )
-
-        try:
-            raw = self._safe_gemini_call(
-                prompt,
-                system_instruction=(
-                    "You are a seasoned real estate investment analyst. "
-                    "Grade deals objectively. Reply with ONLY a JSON object."
-                ),
-                max_output_tokens=400,
-            )
-            result = json.loads(raw)
-            if result.get("grade") not in ("A", "B", "C", "D"):
-                result["grade"] = "C"
-            result.setdefault("strengths", [])
-            result.setdefault("risks", [])
-            result["generated_at"] = datetime.datetime.now().isoformat()
-            return result
-        except Exception as e:
-            return {**fallback, "summary": f"Scoring failed: {str(e)}"}
-
-
-class MaintenancePriorityAgent(BaseAgent):
-    """Suggest priority level for a maintenance request."""
-
-    name = "MaintenancePriorityAgent"
-
-    VALID_PRIORITIES = ["Low", "Normal", "High", "Urgent"]
-
-    def run(self, title: str = "", description: str = "", **kwargs) -> Dict[str, Any]:
-        fallback = {"priority": "Normal", "reasoning": "AI unavailable"}
-        if not os.environ.get("GOOGLE_API_KEY"):
-            return fallback
-
-        prompt = (
-            f"Maintenance request title: {title}\n"
-            f"Description: {description}\n\n"
-            "Classify urgency. Urgent = safety/habitability risk (no heat, flooding, gas leak, etc.). "
-            "High = significant property damage risk. Normal = routine repairs. Low = cosmetic/minor.\n\n"
-            "Reply with ONLY valid JSON:\n"
-            '{"priority": "<Low|Normal|High|Urgent>", "reasoning": "<one sentence>"}'
-        )
-
-        try:
-            raw = self._safe_gemini_call(
-                prompt,
-                system_instruction=(
-                    "You are a property manager triaging maintenance requests. "
-                    "Reply with ONLY a JSON object, no markdown."
-                ),
-                max_output_tokens=120,
-            )
-            result = json.loads(raw)
-            if result.get("priority") not in self.VALID_PRIORITIES:
-                result["priority"] = "Normal"
-            return result
-        except Exception as e:
-            return {**fallback, "reasoning": f"Priority suggestion failed: {str(e)}"}
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator agents — compose specialist agents in multi-step workflows
-# ---------------------------------------------------------------------------
-
-class LeaseRenewalOrchestratorAgent(BaseAgent):
-    """Sequential workflow: market context → renewal letter → pricing timeline."""
-
-    name = "LeaseRenewalOrchestratorAgent"
-
-    def run(
-        self,
-        tenant_id: int = None,
-        db: Session = None,
-        market_rent: Optional[float] = None,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        if not tenant:
-            return {"error": f"Tenant {tenant_id} not found."}
-
-        today = datetime.date.today()
-        days_until_expiry = (tenant.lease_end - today).days if tenant.lease_end else None
-
-        if tenant.lease_end:
-            deadline_date = tenant.lease_end - datetime.timedelta(days=30)
-            recommended_deadline = deadline_date.isoformat()
-        else:
-            recommended_deadline = None
-
-        letter_result = RenewalLetterAgent().run(
-            tenant_id=tenant_id, db=db, market_rent=market_rent
-        )
-        if "error" in letter_result:
-            return letter_result
-
-        current_rent = tenant.rent_amount or 0.0
-        suggested_rent = letter_result.get("suggested_rent", current_rent)
-        if suggested_rent and current_rent > 0:
-            pct_change = ((suggested_rent - current_rent) / current_rent) * 100
-            pricing_strategy = (
-                f"{pct_change:.1f}% increase from ${current_rent:,.0f} to "
-                f"${suggested_rent:,.0f}/month"
-            )
-        else:
-            pricing_strategy = f"Proposed rent: ${suggested_rent:,.0f}/month"
-
-        return {
-            "letter_text": letter_result.get("letter_text", ""),
-            "suggested_rent": suggested_rent,
-            "market_context": letter_result.get("market_context", ""),
-            "days_until_expiry": days_until_expiry,
-            "recommended_deadline": recommended_deadline,
-            "pricing_strategy": pricing_strategy,
-            "tenant_intent": tenant.intent or "Undecided",
-        }
-
-
-class PortfolioHealthCheckOrchestratorAgent(BaseAgent):
-    """Parallel portfolio scan: chains maintenance + advice + insights into one report."""
-
-    name = "PortfolioHealthCheckOrchestratorAgent"
-
-    def run(self, db: Session = None, **kwargs) -> Dict[str, Any]:
-        maintenance_result = MaintenanceHealthAgent().run(db=db)
-        advice_result = PortfolioAdvisorAgent().run(db=db)
-
-        all_alerts = generate_insights(db)
-        lease_warnings = [a for a in all_alerts if a.get("type") == "warning"]
-
-        portfolio_advice = advice_result.get("advice", "")
-        maintenance_alerts = maintenance_result.get("alerts", [])
-
-        executive_summary = ""
-        if os.environ.get("GOOGLE_API_KEY"):
-            try:
-                maint_text = (
-                    "\n".join(
-                        f"- [{a['severity'].upper()}] {a['property']}: {a['alert']}"
-                        for a in maintenance_alerts[:5]
-                    )
-                    if maintenance_alerts
-                    else "No maintenance anomalies detected."
-                )
-                lease_text = (
-                    "\n".join(f"- {a['description']}" for a in lease_warnings[:5])
-                    if lease_warnings
-                    else "No imminent lease expirations."
-                )
-                synth_prompt = (
-                    "Write a 100-150 word executive summary for a real estate portfolio owner.\n\n"
-                    f"MAINTENANCE STATUS:\n{maint_text}\n\n"
-                    f"LEASE STATUS:\n{lease_text}\n\n"
-                    f"STRATEGIC ADVICE:\n{portfolio_advice[:500] if portfolio_advice else 'N/A'}\n\n"
-                    "Be concise and actionable. Highlight the top 2-3 items requiring immediate attention."
-                )
-                executive_summary = self._safe_gemini_call(
-                    synth_prompt,
-                    system_instruction=(
-                        "You are a CXO-level real estate advisor. "
-                        "Write a tight executive summary. Plain text only, no markdown."
-                    ),
-                    max_output_tokens=250,
-                )
-            except Exception as e:
-                executive_summary = f"Summary unavailable: {str(e)}"
-        else:
-            parts = []
-            if lease_warnings:
-                parts.append(f"{len(lease_warnings)} lease(s) expiring soon.")
-            if maintenance_alerts:
-                parts.append(f"{len(maintenance_alerts)} maintenance issue(s) flagged.")
-            executive_summary = " ".join(parts) if parts else "Portfolio appears healthy."
-
-        return {
-            "executive_summary": executive_summary,
-            "maintenance_alerts": maintenance_alerts,
-            "portfolio_advice": portfolio_advice,
-            "lease_warnings": lease_warnings,
-            "generated_at": datetime.datetime.now().isoformat(),
-        }
-
-
-# ---------------------------------------------------------------------------
-# AgentOrchestrator — single entry point for all AI workflows
-# ---------------------------------------------------------------------------
-
-class AgentOrchestrator:
-    """Routes to the right agent(s) and manages multi-step workflows."""
-
-    def __init__(self):
-        self.renewal_agent = RenewalLetterAgent()
-        self.portfolio_agent = PortfolioAdvisorAgent()
-        self.doc_agent = DocumentIntelligenceAgent()
-        self.maintenance_agent = MaintenanceHealthAgent()
-        self.categorizer_agent = TransactionCategorizerAgent()
-        self.deal_scorer_agent = DealScorerAgent()
-        self.priority_agent = MaintenancePriorityAgent()
-        self.lease_renewal_orchestrator = LeaseRenewalOrchestratorAgent()
-        self.health_check_orchestrator = PortfolioHealthCheckOrchestratorAgent()
-
-    def run_portfolio_health_check(self, db: Session) -> Dict[str, Any]:
-        return self.health_check_orchestrator.run(db=db)
-
-    def run_lease_renewal_workflow(
-        self,
-        tenant_id: int,
-        db: Session,
-        market_rent: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        return self.lease_renewal_orchestrator.run(
-            tenant_id=tenant_id, db=db, market_rent=market_rent
-        )
-
-    def categorize_transaction(
-        self,
-        description: str,
-        amount: float = 0.0,
-        property_address: str = "",
-    ) -> Dict[str, Any]:
-        return self.categorizer_agent.run(
-            description=description,
-            amount=amount,
-            property_address=property_address,
-        )
-
-    def score_deal(self, deal_inputs: Dict[str, Any]) -> Dict[str, Any]:
-        return self.deal_scorer_agent.run(**deal_inputs)
-
-    def suggest_maintenance_priority(self, title: str, description: str) -> Dict[str, Any]:
-        return self.priority_agent.run(title=title, description=description)
-
-
-# Module-level singleton — import this in main.py
-orchestrator = AgentOrchestrator()
-
-
-# ---------------------------------------------------------------------------
-# Legacy free functions — preserved for backward-compatible route calls
+# AI: Lease renewal letter
 # ---------------------------------------------------------------------------
 
 def draft_renewal_letter(
@@ -611,7 +206,17 @@ def draft_renewal_letter(
     db: Session,
     market_rent: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Draft a professional lease renewal letter using Gemini."""
+    """Draft a professional lease renewal letter using Gemini.
+
+    Returns a dict:
+      {
+        "letter_text": str,
+        "suggested_rent": float,
+        "market_context": str,
+      }
+
+    On missing API key or package, returns an error dict with key "error".
+    """
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         return {"error": f"Tenant {tenant_id} not found."}
@@ -745,6 +350,7 @@ Requirements:
 # AI: Document intelligence — extract structured data from receipts / invoices
 # ---------------------------------------------------------------------------
 
+# MIME types that Gemini's vision API supports natively
 _GEMINI_VISION_MIME_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "application/pdf",
@@ -777,7 +383,16 @@ Reply with ONLY a JSON object like:
 
 
 def extract_document_data(storage_path: str) -> Dict[str, Any]:
-    """Read a file from disk and use Gemini Vision to extract structured fields."""
+    """Read a file from disk and use Gemini Vision to extract structured fields.
+
+    Args:
+        storage_path: Filename under backend/uploads/ (not a full path).
+
+    Returns:
+        Dict with keys: amount, date, vendor, category, confidence.
+        On failure or unsupported file, returns a dict with confidence=0 and
+        the remaining fields as None.
+    """
     _empty = {
         "amount": None,
         "date": None,
@@ -818,6 +433,7 @@ def extract_document_data(storage_path: str) -> Dict[str, Any]:
         )
         raw_text = response.text.strip()
 
+        import json
         extracted = json.loads(raw_text)
 
         amount = extracted.get("amount")
@@ -875,7 +491,10 @@ def _generate_alert_text(
     gross_income: float,
     pct: float,
 ) -> str:
-    """Call Gemini to generate a human-readable alert for a flagged expense category."""
+    """Call Gemini to generate a human-readable alert for a flagged expense category.
+
+    Falls back to a template string if GOOGLE_API_KEY is not set.
+    """
     fallback = (
         f"{category} expenses at {prop_address} are {pct:.0%} of gross income, "
         f"exceeding the 15% threshold."
@@ -905,7 +524,16 @@ def _generate_alert_text(
 
 
 def analyze_maintenance_health(db: Session) -> List[Dict[str, Any]]:
-    """Scan trailing-12-month transactions for spending anomalies per property."""
+    """Scan trailing-12-month transactions for spending anomalies per property.
+
+    Flags any expense category where (category_expenses / gross_income) > 0.15.
+    Uses Gemini to generate a human-readable alert message for each flagged item.
+
+    Returns:
+        List of alert dicts:
+        [{"property": str, "category": str, "alert": str,
+          "severity": "warning"|"danger", "amount": float, "pct_of_income": float}]
+    """
     today = datetime.date.today()
     twelve_months_ago = today - datetime.timedelta(days=365)
 
@@ -965,3 +593,301 @@ def analyze_maintenance_health(db: Session) -> List[Dict[str, Any]]:
 
     alerts.sort(key=lambda a: a["pct_of_income"], reverse=True)
     return alerts
+
+
+# ---------------------------------------------------------------------------
+# AI: Portfolio Chat Agent with Gemini function calling
+# ---------------------------------------------------------------------------
+
+def _build_portfolio_tools():
+    """Return a Gemini Tool containing all portfolio query function declarations."""
+    try:
+        import google.generativeai as genai
+
+        return genai.protos.Tool(
+            function_declarations=[
+                genai.protos.FunctionDeclaration(
+                    name="get_properties",
+                    description=(
+                        "Retrieve all properties in the portfolio with address, "
+                        "type, purchase price, purchase date, and status."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={},
+                    ),
+                ),
+                genai.protos.FunctionDeclaration(
+                    name="get_tenants",
+                    description=(
+                        "Retrieve all tenants with name, property, rent amount, "
+                        "lease dates, renewal intent, and days until lease end."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={},
+                    ),
+                ),
+                genai.protos.FunctionDeclaration(
+                    name="get_transactions",
+                    description=(
+                        "Retrieve recent financial transactions ordered newest first. "
+                        "Optionally filter by property_id or limit the count."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={
+                            "property_id": genai.protos.Schema(
+                                type=genai.protos.Type.INTEGER,
+                                description="Filter to a specific property ID. Omit for all.",
+                            ),
+                            "limit": genai.protos.Schema(
+                                type=genai.protos.Type.INTEGER,
+                                description="Max transactions to return (default 50, max 200).",
+                            ),
+                        },
+                    ),
+                ),
+                genai.protos.FunctionDeclaration(
+                    name="get_portfolio_summary",
+                    description=(
+                        "Get high-level portfolio metrics: total value, occupancy rate, "
+                        "current month income/expenses/net, and active alert count."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={},
+                    ),
+                ),
+                genai.protos.FunctionDeclaration(
+                    name="get_cashflow_by_property",
+                    description=(
+                        "Get year-to-date income, expenses, and net cash flow broken "
+                        "down by property."
+                    ),
+                    parameters=genai.protos.Schema(
+                        type=genai.protos.Type.OBJECT,
+                        properties={},
+                    ),
+                ),
+            ]
+        )
+    except ImportError:
+        return None
+
+
+def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
+    """Execute a portfolio tool and return a JSON-serializable value."""
+    today = datetime.date.today()
+
+    if tool_name == "get_properties":
+        properties = db.query(Property).all()
+        return [
+            {
+                "id": p.id,
+                "address": p.address,
+                "type": p.property_type,
+                "purchase_price": p.purchase_price,
+                "purchase_date": p.purchase_date.isoformat() if p.purchase_date else None,
+                "status": p.status,
+            }
+            for p in properties
+        ]
+
+    if tool_name == "get_tenants":
+        tenants = db.query(Tenant).all()
+        return [
+            {
+                "id": t.id,
+                "name": t.name,
+                "property_id": t.property_id,
+                "rent_amount": t.rent_amount,
+                "lease_start": t.lease_start.isoformat() if t.lease_start else None,
+                "lease_end": t.lease_end.isoformat() if t.lease_end else None,
+                "intent": t.intent or "Undecided",
+                "days_until_lease_end": (t.lease_end - today).days if t.lease_end else None,
+            }
+            for t in tenants
+        ]
+
+    if tool_name == "get_transactions":
+        property_id = args.get("property_id")
+        limit = min(int(args.get("limit") or 50), 200)
+        query = db.query(Transaction).order_by(Transaction.transaction_date.desc())
+        if property_id:
+            query = query.filter(Transaction.property_id == int(property_id))
+        txns = query.limit(limit).all()
+        return [
+            {
+                "id": t.id,
+                "property_id": t.property_id,
+                "date": t.transaction_date.isoformat() if t.transaction_date else None,
+                "amount": t.amount,
+                "type": t.type,
+                "category": t.category,
+                "description": t.description,
+                "status": t.status,
+            }
+            for t in txns
+        ]
+
+    if tool_name == "get_portfolio_summary":
+        properties = db.query(Property).all()
+        tenants = db.query(Tenant).all()
+        transactions = db.query(Transaction).all()
+
+        total_value = sum(p.purchase_price or 0 for p in properties)
+        occupied = sum(
+            1 for t in tenants
+            if t.lease_start and t.lease_end and t.lease_start <= today <= t.lease_end
+        )
+        month_start = today.replace(day=1)
+        monthly_income = sum(
+            t.amount for t in transactions
+            if t.status == "Paid"
+            and (t.type or "").lower() == "income"
+            and t.transaction_date and t.transaction_date >= month_start
+        )
+        monthly_expense = sum(
+            t.amount for t in transactions
+            if t.status == "Paid"
+            and (t.type or "").lower() == "expense"
+            and t.transaction_date and t.transaction_date >= month_start
+        )
+        alerts = generate_insights(db)
+        return {
+            "total_properties": len(properties),
+            "total_portfolio_value": total_value,
+            "occupied_units": occupied,
+            "occupancy_rate_pct": round(occupied / len(properties) * 100, 1) if properties else 0,
+            "current_month_income": monthly_income,
+            "current_month_expenses": monthly_expense,
+            "current_month_net": monthly_income - monthly_expense,
+            "active_alerts": len(alerts),
+            "today": today.isoformat(),
+        }
+
+    if tool_name == "get_cashflow_by_property":
+        properties = db.query(Property).all()
+        year_start = datetime.date(today.year, 1, 1)
+        transactions = (
+            db.query(Transaction)
+            .filter(Transaction.status == "Paid", Transaction.transaction_date >= year_start)
+            .all()
+        )
+        income_by_prop: Dict[int, float] = defaultdict(float)
+        expense_by_prop: Dict[int, float] = defaultdict(float)
+        for t in transactions:
+            if (t.type or "").lower() == "income":
+                income_by_prop[t.property_id] += t.amount
+            else:
+                expense_by_prop[t.property_id] += t.amount
+        return [
+            {
+                "property_id": p.id,
+                "address": p.address,
+                "ytd_income": income_by_prop[p.id],
+                "ytd_expenses": expense_by_prop[p.id],
+                "ytd_net": income_by_prop[p.id] - expense_by_prop[p.id],
+            }
+            for p in properties
+        ]
+
+    return {"error": f"Unknown tool: {tool_name}"}
+
+
+def portfolio_chat(
+    message: str,
+    history: List[Dict[str, str]],
+    db: Session,
+) -> Dict[str, Any]:
+    """Run a multi-turn portfolio assistant conversation using Gemini function calling.
+
+    Args:
+        message: The user's current message.
+        history: Prior turns as [{"role": "user"|"model", "content": str}, ...].
+        db: SQLAlchemy session for live data queries.
+
+    Returns:
+        {"reply": str, "tools_used": List[str]} or {"error": str}.
+    """
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        return {"error": "The 'google-generativeai' package is not installed."}
+
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return {"error": "GOOGLE_API_KEY is not set."}
+
+    genai.configure(api_key=api_key)
+
+    tools = _build_portfolio_tools()
+    today_str = datetime.date.today().isoformat()
+
+    system_instruction = (
+        "You are Elara, an AI assistant embedded in a real estate portfolio management platform. "
+        "You have access to live portfolio data through function tools — always call the relevant "
+        "tool(s) before answering questions that require data. "
+        "Be concise and data-driven. Cite specific numbers when you have them. "
+        f"Today's date is {today_str}."
+    )
+
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        tools=[tools] if tools else [],
+        system_instruction=system_instruction,
+    )
+
+    # Convert history to Gemini chat format
+    gemini_history = []
+    for turn in history:
+        role = "user" if turn.get("role") == "user" else "model"
+        gemini_history.append({"role": role, "parts": [turn.get("content", "")]})
+
+    chat = model.start_chat(history=gemini_history)
+
+    tools_used: List[str] = []
+
+    try:
+        import json
+
+        response = chat.send_message(message)
+
+        # Agentic loop: keep executing function calls until Gemini returns text
+        for _ in range(8):
+            function_calls = [
+                p.function_call
+                for p in response.parts
+                if hasattr(p, "function_call") and p.function_call.name
+            ]
+            if not function_calls:
+                break
+
+            # Execute all function calls from this response turn
+            tool_responses = []
+            for fc in function_calls:
+                tool_name = fc.name
+                tool_args = dict(fc.args) if fc.args else {}
+                tools_used.append(tool_name)
+
+                result = _dispatch_tool(tool_name, tool_args, db)
+
+                tool_responses.append(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=tool_name,
+                            response={"result": json.dumps(result, default=str)},
+                        )
+                    )
+                )
+
+            response = chat.send_message(tool_responses)
+
+        return {
+            "reply": response.text,
+            "tools_used": list(dict.fromkeys(tools_used)),  # deduplicated, order-preserving
+        }
+
+    except Exception as e:
+        return {"error": f"Chat failed: {str(e)}"}

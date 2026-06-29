@@ -10,3 +10,9 @@ email-validator
 cryptography
 httpx
 aiofiles
+psycopg2-binary
+alembic
+celery
+redis
+stripe
+sentry-sdk

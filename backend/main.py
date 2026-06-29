@@ -18,6 +18,15 @@ import asyncio
 import uuid
 import csv
 import io
+import sentry_sdk
+
+sentry_dsn = os.environ.get("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 
 from agent import (
     generate_insights,
@@ -25,7 +34,7 @@ from agent import (
     extract_document_data,
     analyze_maintenance_health,
     get_portfolio_advice,
-    orchestrator,
+    portfolio_chat,
 )
 from auth import (
     create_token,
@@ -36,56 +45,25 @@ from auth import (
 
 app = FastAPI(title="Elara API")
 
-# Per-request debug logging — opt-in via DEBUG_HTTP to avoid noisy/leaky logs
-# in production. Set DEBUG_HTTP=1 locally to trace requests.
-if os.environ.get("DEBUG_HTTP"):
-    @app.middleware("http")
-    async def debug_logging(request, call_next):
-        print(f"DEBUG: {request.method} {request.url}")
-        try:
-            response = await call_next(request)
-            print(f"DEBUG: Response {response.status_code}")
-            return response
-        except Exception as e:
-            print(f"DEBUG: Exception: {e}")
-            raise
-
-# CORS — configurable allowlist. Set CORS_ORIGINS to a comma-separated list of
-# origins (e.g. "https://app.example.com,https://example.com"). Defaults to the
-# local dev origins. Using an explicit allowlist (not "*") keeps
-# allow_credentials valid and avoids exposing the API to arbitrary origins.
-_default_origins = "http://localhost:5173,http://localhost,http://127.0.0.1:5173,http://localhost:8000"
-CORS_ORIGINS = [
-    o.strip() for o in os.environ.get("CORS_ORIGINS", _default_origins).split(",") if o.strip()
-]
+@app.middleware("http")
+async def debug_logging(request, call_next):
+    print(f"DEBUG: {request.method} {request.url}")
+    # print(f"DEBUG: Headers: {dict(request.headers)}")
+    try:
+        response = await call_next(request)
+        print(f"DEBUG: Response {response.status_code}")
+        return response
+    except Exception as e:
+        print(f"DEBUG: Exception: {e}")
+        raise
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def _log_env_diagnostics():
-    """Log which optional integrations are configured (warn, never crash)."""
-    ai = "enabled" if os.environ.get("GOOGLE_API_KEY") else "DISABLED (set GOOGLE_API_KEY)"
-    market = "enabled" if os.environ.get("RAPIDAPI_KEY") else "DISABLED (set RAPIDAPI_KEY)"
-    print(f"[startup] Elara API ready — AI: {ai}; Market data: {market}")
-    print(f"[startup] CORS origins: {CORS_ORIGINS}")
-
-
-@app.get("/api/health")
-async def health_check():
-    """Unauthenticated liveness/readiness probe for deploy + uptime checks."""
-    return {
-        "status": "ok",
-        "ai_enabled": bool(os.environ.get("GOOGLE_API_KEY")),
-        "market_data_enabled": bool(os.environ.get("RAPIDAPI_KEY")),
-        "time": datetime.datetime.utcnow().isoformat() + "Z",
-    }
 
 # ---------------------------------------------------------------------------
 # Upload directory
@@ -93,9 +71,6 @@ async def health_check():
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-PROPERTY_IMAGES_DIR = os.path.join(UPLOAD_DIR, "property_images")
-os.makedirs(PROPERTY_IMAGES_DIR, exist_ok=True)
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -526,15 +501,11 @@ def _serialize_property(p: Property, db: Session) -> dict:
 
 @app.get("/api/properties")
 async def get_properties(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    q = db.query(Property)
-    total = q.count()
-    properties = q.offset(skip).limit(limit).all()
-    return {"items": [_serialize_property(p, db) for p in properties], "total": total, "skip": skip, "limit": limit}
+    properties = db.query(Property).all()
+    return [_serialize_property(p, db) for p in properties]
 
 
 @app.get("/api/properties/{property_id}")
@@ -604,54 +575,6 @@ async def delete_property(
         raise HTTPException(status_code=404, detail="Property not found")
     db.delete(prop)
     db.commit()
-
-
-_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-
-
-@app.post("/api/properties/{property_id}/image", status_code=200)
-async def upload_property_image(
-    property_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    """Upload or replace the cover image for a property."""
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
-    _, ext = os.path.splitext(file.filename or "")
-    if ext.lower() not in _IMAGE_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported image type: {ext}")
-    dest = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{ext.lower()}")
-    # Remove any existing image for this property (different extension)
-    for f_ext in _IMAGE_EXTENSIONS:
-        old = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{f_ext}")
-        if os.path.exists(old) and old != dest:
-            os.remove(old)
-    content = await file.read()
-    with open(dest, "wb") as fh:
-        fh.write(content)
-    return {"message": "Image uploaded", "property_id": property_id}
-
-
-@app.get("/api/properties/{property_id}/image")
-async def get_property_image(
-    property_id: int,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    """Return the property cover image (streams file)."""
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
-    for ext in _IMAGE_EXTENSIONS:
-        path = os.path.join(PROPERTY_IMAGES_DIR, f"property_{property_id}{ext}")
-        if os.path.exists(path):
-            mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else f"image/{ext.lstrip('.')}"
-            return StreamingResponse(open(path, "rb"), media_type=mime)
-    raise HTTPException(status_code=404, detail="No image uploaded for this property")
 
 
 # ---------------------------------------------------------------------------
@@ -809,15 +732,11 @@ def _serialize_tenant(t: Tenant, db: Session) -> dict:
 
 @app.get("/api/tenants")
 async def get_tenants(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    q = db.query(Tenant)
-    total = q.count()
-    tenants = q.offset(skip).limit(limit).all()
-    return {"items": [_serialize_tenant(t, db) for t in tenants], "total": total, "skip": skip, "limit": limit}
+    tenants = db.query(Tenant).all()
+    return [_serialize_tenant(t, db) for t in tenants]
 
 
 @app.get("/api/tenants/{tenant_id}")
@@ -992,15 +911,11 @@ def _serialize_maintenance(m: MaintenanceRequest) -> dict:
 
 @app.get("/api/maintenance")
 async def get_maintenance_requests(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    q = db.query(MaintenanceRequest)
-    total = q.count()
-    requests = q.offset(skip).limit(limit).all()
-    return {"items": [_serialize_maintenance(r) for r in requests], "total": total, "skip": skip, "limit": limit}
+    requests = db.query(MaintenanceRequest).all()
+    return [_serialize_maintenance(r) for r in requests]
 
 
 @app.post("/api/maintenance", status_code=201)
@@ -1096,35 +1011,17 @@ class RenewalLetterRequest(BaseModel):
     tenant_id: int
 
 
-def _ai_error_to_http(result: dict) -> None:
-    """Translate an agent error dict into an HTTPException.
-
-    Missing/uninstalled AI credentials are a configuration issue (503,
-    service unavailable); anything else is treated as a server error (500).
-    """
-    msg = result.get("error", "AI request failed")
-    if "GOOGLE_API_KEY" in msg or "not installed" in msg or "not set" in msg:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "AI service unavailable: " + msg +
-                " Set GOOGLE_API_KEY and restart the server to enable this feature."
-            ),
-        )
-    raise HTTPException(status_code=500, detail=msg)
-
-
 @app.post("/api/agents/renewal-letter")
 async def renewal_letter(
     body: RenewalLetterRequest,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Draft a lease renewal letter using Gemini.
+    """Draft a lease renewal letter using Claude.
 
     Fetches market rent from Zillow for the property city (falls back to
     current rent +3% if Zillow is unavailable or RAPIDAPI_KEY is unset).
-    Returns 503 when GOOGLE_API_KEY is missing.
+    Returns 503 when ANTHROPIC_API_KEY is missing.
     """
     tenant = db.query(Tenant).filter(Tenant.id == body.tenant_id).first()
     if not tenant:
@@ -1144,7 +1041,16 @@ async def renewal_letter(
     result = draft_renewal_letter(body.tenant_id, db, market_rent=market_rent)
 
     if "error" in result:
-        _ai_error_to_http(result)
+        error_msg = result["error"]
+        if "GOOGLE_API_KEY" in error_msg or "not installed" in error_msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI service unavailable: " + error_msg +
+                    " Set GOOGLE_API_KEY and restart the server to enable this feature."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=error_msg)
 
     return result
 
@@ -1158,7 +1064,13 @@ async def portfolio_advice(
     result = get_portfolio_advice(db)
 
     if "error" in result:
-        _ai_error_to_http(result)
+        error_msg = result["error"]
+        if "GOOGLE_API_KEY" in error_msg or "not installed" in error_msg:
+            raise HTTPException(
+                status_code=503,
+                detail=error_msg
+            )
+        raise HTTPException(status_code=500, detail=error_msg)
 
     return result
 
@@ -1215,49 +1127,11 @@ def _serialize_transaction(t: Transaction, db: Session) -> dict:
 
 @app.get("/api/transactions")
 async def get_transactions(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    q = db.query(Transaction)
-    total = q.count()
-    transactions = q.offset(skip).limit(limit).all()
-    return {"items": [_serialize_transaction(t, db) for t in transactions], "total": total, "skip": skip, "limit": limit}
-
-
-@app.get("/api/transactions/export.csv")
-async def export_transactions_csv(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Download all transactions as CSV."""
-    rows = (
-        db.query(Transaction)
-        .join(Property, Transaction.property_id == Property.id)
-        .filter(Property.user_id == current_user.id)
-        .order_by(Transaction.transaction_date.desc())
-        .all()
-    )
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(["Date", "Property", "Type", "Category", "Amount", "Status", "Description"])
-    for r in rows:
-        writer.writerow([
-            r.transaction_date.isoformat() if r.transaction_date else "",
-            r.property.address if r.property else "",
-            r.type,
-            r.category,
-            r.amount,
-            r.status,
-            r.description or "",
-        ])
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=transactions.csv"},
-    )
+    transactions = db.query(Transaction).all()
+    return [_serialize_transaction(t, db) for t in transactions]
 
 
 @app.get("/api/transactions/{transaction_id}")
@@ -1408,16 +1282,10 @@ async def upload_transaction_document(
     db.commit()
     db.refresh(doc)
 
-    # Attempt AI extraction — non-fatal if it fails
+    # Attempt AI extraction via background task
     try:
-        extraction = extract_document_data(safe_filename)
-        doc.extracted_amount = extraction.get("amount")
-        doc.extracted_date = extraction.get("date")
-        doc.extracted_vendor = extraction.get("vendor")
-        doc.extracted_category = extraction.get("category")
-        doc.extraction_confidence = extraction.get("confidence")
-        db.commit()
-        db.refresh(doc)
+        from worker import process_document_with_ai
+        process_document_with_ai.delay(safe_filename, doc.id)
     except Exception:
         pass  # Extraction failure must never block a successful upload
 
@@ -2236,165 +2104,86 @@ async def maintenance_health(
 
 
 # ---------------------------------------------------------------------------
-# Orchestrated agent endpoints
+# Portfolio Chat Agent (Gemini function calling)
 # ---------------------------------------------------------------------------
 
-class CategorizeTxRequest(BaseModel):
-    description: str
-    amount: Optional[float] = 0.0
-    property_id: Optional[int] = None
+class ChatMessage(BaseModel):
+    role: str  # "user" or "model"
+    content: str
 
 
-@app.post("/api/agents/categorize-transaction")
-async def categorize_transaction(
-    body: CategorizeTxRequest,
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[List[ChatMessage]] = []
+
+
+@app.post("/api/agents/chat")
+async def portfolio_chat_endpoint(
+    body: ChatRequest,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Use AI to classify a transaction description into a standard category."""
-    property_address = ""
-    if body.property_id:
-        prop = db.query(Property).filter(Property.id == body.property_id).first()
-        if prop:
-            property_address = prop.address or ""
+    """Conversational portfolio AI assistant backed by Gemini function calling.
 
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: orchestrator.categorize_transaction(
-            description=body.description,
-            amount=body.amount or 0.0,
-            property_address=property_address,
-        ),
-    )
-    return result
+    The agent can call portfolio data tools (properties, tenants, transactions,
+    cashflow) to ground its answers in live data before responding.
 
+    Request body:
+      message   - The user's current message.
+      history   - Prior conversation turns [{"role": "user"|"model", "content": str}].
 
-class DealScoreRequest(BaseModel):
-    purchase_price: float
-    cap_rate: float
-    coc_return: float
-    annual_cash_flow: float
-    break_even_occupancy: float
-    noi: float
-    grm: float
-    down_payment: Optional[float] = None
-    loan_amount: Optional[float] = None
+    Returns:
+      {"reply": str, "tools_used": List[str]}
+    """
+    history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
+    result = portfolio_chat(body.message, history, db)
 
-
-@app.post("/api/agents/score-deal")
-async def score_deal(
-    body: DealScoreRequest,
-    _user: User = Depends(get_current_user),
-):
-    """Grade a real estate deal A–D with AI narrative analysis."""
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: orchestrator.score_deal(body.model_dump()),
-    )
-    if "error" in result and result.get("grade") not in ("A", "B", "C", "D", "N/A"):
-        _ai_error_to_http(result)
-    return result
-
-
-@app.get("/api/agents/health-check")
-async def portfolio_health_check(
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    """Full portfolio health check: chains maintenance + portfolio advice + lease alerts."""
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: orchestrator.run_portfolio_health_check(db=db),
-    )
-    return result
-
-
-class LeaseRenewalWorkflowRequest(BaseModel):
-    market_rent: Optional[float] = None
-
-
-@app.post("/api/agents/lease-renewal-workflow/{tenant_id}")
-async def lease_renewal_workflow(
-    tenant_id: int,
-    body: LeaseRenewalWorkflowRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    """Full lease renewal workflow: market data + letter + pricing timeline."""
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail=f"Tenant {tenant_id} not found")
-
-    market_rent = body.market_rent
-    if not market_rent and tenant.property_id:
-        prop = db.query(Property).filter(Property.id == tenant.property_id).first()
-        if prop:
-            city = parse_city_from_address(prop.address)
-            dummy_alerts: list = []
-            market_data = await fetch_zillow_market_data(city, dummy_alerts)
-            zillow_rent = market_data.get("cityAverageRent")
-            if zillow_rent and zillow_rent > 0:
-                market_rent = float(zillow_rent)
-
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: orchestrator.run_lease_renewal_workflow(
-            tenant_id=tenant_id, db=db, market_rent=market_rent
-        ),
-    )
     if "error" in result:
-        _ai_error_to_http(result)
+        error_msg = result["error"]
+        status_code = 503 if ("GOOGLE_API_KEY" in error_msg or "not installed" in error_msg) else 500
+        raise HTTPException(status_code=status_code, detail=error_msg)
+
     return result
 
-
-class SuggestPriorityRequest(BaseModel):
-    title: str
-    description: str
-
-
-@app.post("/api/agents/suggest-priority")
-async def suggest_maintenance_priority(
-    body: SuggestPriorityRequest,
-    _user: User = Depends(get_current_user),
-):
-    """Use AI to suggest a priority level for a maintenance request."""
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: orchestrator.suggest_maintenance_priority(
-            title=body.title, description=body.description
-        ),
-    )
-    return result
-
-
 # ---------------------------------------------------------------------------
-# Tenant Portal
+# Billing
 # ---------------------------------------------------------------------------
+from fastapi import Request
 
-@app.get("/api/tenant-portal/me")
-async def tenant_portal_me(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Return the authenticated tenant's lease summary and maintenance requests."""
-    tenant = db.query(Tenant).filter(Tenant.user_id == current_user.id).first()
-    if not tenant:
-        raise HTTPException(
-            status_code=404,
-            detail="No tenant record is linked to this account. Contact your property manager.",
-        )
-    maintenance = (
-        db.query(MaintenanceRequest)
-        .filter(MaintenanceRequest.tenant_id == tenant.id)
-        .order_by(MaintenanceRequest.created_at.desc())
-        .all()
+@app.post("/api/billing/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    from billing import handle_webhook_event
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+    
+    try:
+        event = handle_webhook_event(payload, sig_header)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    # Handle the event
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        client_reference_id = session.get("client_reference_id")
+        if client_reference_id:
+            user = db.query(User).filter(User.id == int(client_reference_id)).first()
+            if user:
+                user.subscription_status = "active"
+                user.subscription_tier = "Pro"
+                db.commit()
+
+    return {"status": "success"}
+
+@app.post("/api/billing/create-checkout")
+async def create_checkout(tier: str = "Pro", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from billing import create_checkout_session
+    url = create_checkout_session(
+        user_id=current_user.id,
+        user_email=current_user.email,
+        tier=tier,
+        success_url="http://localhost:80/billing/success",
+        cancel_url="http://localhost:80/billing/cancel"
     )
-    return {
-        "tenant": _serialize_tenant(tenant, db),
-        "maintenanceRequests": [_serialize_maintenance(m) for m in maintenance],
-    }
+    if url:
+        return {"url": url}
+    raise HTTPException(status_code=500, detail="Could not create checkout session")
