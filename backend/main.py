@@ -33,6 +33,7 @@ import uuid
 import csv
 import io
 import sentry_sdk
+import redis as _redis_module
 from urllib.parse import quote
 
 logger = logging.getLogger("elara.api")
@@ -156,6 +157,40 @@ app = FastAPI(title="Elara API", lifespan=lifespan)
 
 _RATE_LIMIT_BUCKETS: Dict[str, tuple[int, float]] = {}
 
+# ---------------------------------------------------------------------------
+# Redis client — used for distributed rate limiting; falls back to in-process
+# ---------------------------------------------------------------------------
+
+REDIS_URL = os.environ.get("REDIS_URL", "")
+_redis_client: Optional[_redis_module.Redis] = None
+
+if REDIS_URL:
+    try:
+        _redis_client = _redis_module.from_url(REDIS_URL, socket_connect_timeout=2)
+        _redis_client.ping()
+        logger.info("Redis connected for distributed rate limiting: %s", REDIS_URL)
+    except Exception as _exc:
+        logger.warning("Redis unavailable (%s) — falling back to in-process rate limiting", _exc)
+        _redis_client = None
+
+
+def _check_rate_limit_redis(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Sliding window counter in Redis. Returns True if the request is allowed."""
+    if _redis_client is None:
+        return True  # no Redis configured — skip
+    try:
+        now = int(time.time())
+        window_key = f"rl:{key}:{now // window_seconds}"
+        pipe = _redis_client.pipeline()
+        pipe.incr(window_key)
+        pipe.expire(window_key, window_seconds * 2)
+        results = pipe.execute()
+        count = results[0]
+        return count <= max_requests
+    except _redis_module.RedisError as exc:
+        logger.warning("Redis rate-limit check failed (%s) — allowing request", exc)
+        return True  # degrade gracefully
+
 
 def _client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for")
@@ -196,8 +231,30 @@ def _check_rate_limit(request: Request) -> Optional[JSONResponse]:
     if limit <= 0:
         return None
 
+    ip = _client_ip(request)
+    key = f"{group}:{ip}"
+
+    # Try Redis-backed distributed rate limiting first
+    if _redis_client is not None:
+        allowed = _check_rate_limit_redis(key, limit, RATE_LIMIT_WINDOW_SECONDS)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please try again shortly."},
+                headers={
+                    "Retry-After": str(RATE_LIMIT_WINDOW_SECONDS),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(int(time.time()) + RATE_LIMIT_WINDOW_SECONDS),
+                },
+            )
+        request.state.rate_limit_headers = {
+            "X-RateLimit-Limit": str(limit),
+        }
+        return None
+
+    # In-process fallback (single-process / no Redis)
     now = time.monotonic()
-    key = f"{group}:{_client_ip(request)}"
     count, reset_at = _RATE_LIMIT_BUCKETS.get(key, (0, now + RATE_LIMIT_WINDOW_SECONDS))
 
     if now >= reset_at:
