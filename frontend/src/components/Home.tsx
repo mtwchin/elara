@@ -20,6 +20,8 @@ interface Props {
   onLoginClick: () => void;
   theme: Theme;
   onToggleTheme: () => void;
+  onPrivacyClick?: () => void;
+  onTermsClick?: () => void;
 }
 
 const customerSegments = [
@@ -106,7 +108,7 @@ const trustItems = [
   'AI disclaimers required before launch',
 ];
 
-const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
+const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme, onPrivacyClick, onTermsClick }) => {
   const scrollToPricing = () => {
     document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -298,6 +300,18 @@ const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
         <div>
           <img src={elaraLogo} alt="" />
           <span>Elara</span>
+        </div>
+        <div style={{ display: 'flex', gap: '2rem', fontSize: '0.85rem', marginLeft: 'auto' }}>
+          {onPrivacyClick && (
+            <button onClick={onPrivacyClick} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', textDecoration: 'underline' }}>
+              Privacy Policy
+            </button>
+          )}
+          {onTermsClick && (
+            <button onClick={onTermsClick} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', textDecoration: 'underline' }}>
+              Terms of Service
+            </button>
+          )}
         </div>
         <p>© 2026 Elara. Beta product for rental portfolio operations. AI outputs should be reviewed before use.</p>
       </footer>

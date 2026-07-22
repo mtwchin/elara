@@ -11,6 +11,8 @@ import TenantPortal from './components/TenantPortal';
 import Assistant from './components/Assistant';
 import Billing from './components/Billing';
 import Settings from './components/Settings';
+import PrivacyPolicy from './components/PrivacyPolicy';
+import Terms from './components/Terms';
 import AcceptInvite from './components/AcceptInvite';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
@@ -21,7 +23,7 @@ import { getStoredTheme, applyTheme } from './theme';
 import type { Theme } from './theme';
 import elaraLogo from './assets/elara.jpg';
 
-type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant' | 'billing' | 'settings';
+type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant' | 'billing' | 'settings' | 'privacy-policy' | 'terms';
 
 function App() {
   const [accountType, setAccountType] = useState<string | null>(getAccountType());
@@ -62,6 +64,12 @@ function App() {
   };
 
   if (!authed) {
+    if (currentView === 'privacy-policy') {
+      return <PrivacyPolicy onBack={() => setCurrentView('dashboard')} />;
+    }
+    if (currentView === 'terms') {
+      return <Terms onBack={() => setCurrentView('dashboard')} />;
+    }
     if (showAcceptInvite) {
       return <AcceptInvite onBack={() => { setShowAcceptInvite(false); setShowLogin(true); }} />;
     }
@@ -87,7 +95,7 @@ function App() {
         />
       );
     }
-    return <Home onLoginClick={() => setShowLogin(true)} theme={theme} onToggleTheme={toggleTheme} />;
+    return <Home onLoginClick={() => setShowLogin(true)} theme={theme} onToggleTheme={toggleTheme} onPrivacyClick={() => setCurrentView('privacy-policy')} onTermsClick={() => setCurrentView('terms')} />;
   }
 
   const adminNavItems: { view: View; label: string }[] = [
