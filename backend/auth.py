@@ -53,6 +53,18 @@ def create_token(user: User) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def verify_token(token: str) -> Optional[dict]:
+    """Verify a local HS256 token and return its payload, or None if invalid/expired."""
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+        if unverified_header.get("alg") != JWT_ALGORITHM:
+            return None
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.PyJWTError:
+        return None
+
+
 CLERK_AUDIENCE = os.environ.get("CLERK_AUDIENCE", "mock-client-app")
 CLERK_ISSUER = os.environ.get("CLERK_ISSUER", "https://clerk.mock-issuer.com")
 
