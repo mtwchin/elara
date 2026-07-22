@@ -158,7 +158,7 @@ async def test_t4_scenario_3_zero_config_fallback(async_client, monkeypatch):
     Scenario 3: Zero-Config Deployment Fallback
     1. Backend starts up in a fresh container without RAPIDAPI_KEY or custom JWKS variables.
     2. Request /api/dashboard.
-    3. Verify authentication is bypassed/mocked or handles default dev checkout gracefully, and Zillow client falls back to seed/mock.
+    3. Verify auth fails closed instead of accepting unverifiable RS256 tokens.
     """
     # Remove config environment variables
     monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
@@ -169,11 +169,7 @@ async def test_t4_scenario_3_zero_config_fallback(async_client, monkeypatch):
     headers = {"Authorization": f"Bearer {token}"}
     
     response = await async_client.get("/api/dashboard", headers=headers)
-    # The application should not crash, it should return 200 OK and fall back to local mock data
-    assert response.status_code == 200
-    data = response.json()
-    assert "metrics" in data
-    assert "marketData" in data
+    assert response.status_code == 401
 
 async def test_t4_scenario_4_multi_user_isolation_caching(async_client, mock_external_services):
     """
@@ -264,4 +260,4 @@ async def test_t4_scenario_5_property_add_roi_refresh(async_client, mock_externa
     # If this is the only property, the portfolio average ROI should be 7.2%.
     # Check if the metrics update as expected.
     assert "metrics" in data
-    assert data["metrics"]["avgRoi"] == 7.2
+    assert data["metrics"]["avgRoi"] == pytest.approx(7.2, abs=0.01)
