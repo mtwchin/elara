@@ -296,74 +296,91 @@ const Properties: React.FC = () => {
         </div>
       </div>
 
-      {search.length > 0 && (
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-          Showing {filteredProperties.length} of {properties.length}
-        </p>
+      {properties.length === 0 && search.length === 0 ? (
+        <div className="glass-panel-static" style={{ display: 'flex', justifyContent: 'center', padding: '3rem 2rem' }}>
+          <div style={{ textAlign: 'center', maxWidth: '400px' }}>
+            <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ color: 'var(--brand-primary)', fontSize: '3rem' }}>
+                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+              </div>
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>No properties yet</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Add your first property to start tracking your portfolio</p>
+            <button className="btn btn-primary" onClick={openAddProperty}>Add Property</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {search.length > 0 && (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+              Showing {filteredProperties.length} of {properties.length}
+            </p>
+          )}
+
+          <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Address</th>
+                  <th>Purchase Price</th>
+                  <th>Property Type</th>
+                  <th>Purchase Date</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredProperties.map((prop) => (
+                  <tr
+                    key={prop.id}
+                    onClick={() => handleSelectRow(prop.id)}
+                    style={{ cursor: 'pointer', background: selectedPropertyId === prop.id ? 'var(--brand-primary-soft)' : undefined }}
+                  >
+                    <td style={{ fontWeight: 500 }}>{prop.address}</td>
+                    <td>${prop.purchasePrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
+                    <td>{prop.propertyType}</td>
+                    <td>{prop.purchaseDate}</td>
+                    <td>{statusBadge(prop.status)}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                          className="btn"
+                          style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+                          onClick={(e) => openEditProperty(prop, e)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
+                          onClick={(e) => { e.stopPropagation(); setConfirmDelete(prop.id); }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredProperties.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="empty-state">
+                        <div className="empty-state-icon">
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        </div>
+                        <h3>No properties match your search</h3>
+                        <p>Try a different search term.</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
-      <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Address</th>
-              <th>Purchase Price</th>
-              <th>Property Type</th>
-              <th>Purchase Date</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredProperties.map((prop) => (
-              <tr
-                key={prop.id}
-                onClick={() => handleSelectRow(prop.id)}
-                style={{ cursor: 'pointer', background: selectedPropertyId === prop.id ? 'var(--brand-primary-soft)' : undefined }}
-              >
-                <td style={{ fontWeight: 500 }}>{prop.address}</td>
-                <td>${prop.purchasePrice?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>
-                <td>{prop.propertyType}</td>
-                <td>{prop.purchaseDate}</td>
-                <td>{statusBadge(prop.status)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      className="btn"
-                      style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
-                      onClick={(e) => openEditProperty(prop, e)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="btn"
-                      style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(prop.id); }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {filteredProperties.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  <div className="empty-state">
-                    <div className="empty-state-icon">
-                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                    </div>
-                    <h3>{search.length > 0 ? 'No properties match your search' : 'No properties yet'}</h3>
-                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add your first property to get started.'}</p>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {selectedPropertyId && selectedProperty && (
+      {properties.length > 0 && selectedPropertyId && selectedProperty && (
         <div className="glass-panel-static" style={{ marginTop: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h3>Mortgage Details — {selectedProperty.address}</h3>
