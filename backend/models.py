@@ -164,6 +164,20 @@ class PasswordResetToken(Base):
     used = Column(Boolean, default=False)
 
 
+class Invitation(Base):
+    __tablename__ = "invitations"
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    email = Column(String(255), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    role = Column(String(20), default="member")   # "member" or "admin"
+    invited_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    accepted_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="pending")  # "pending" | "accepted" | "revoked"
+
+
 class Document(Base):
     """Attachment for a transaction or a property. At least one FK must be set."""
     __tablename__ = "documents"

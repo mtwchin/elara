@@ -16,6 +16,7 @@ from models import (
     Organization,
     UserRole,
     PasswordResetToken,
+    Invitation,
 )
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any, List
@@ -23,6 +24,7 @@ from collections import defaultdict, OrderedDict
 from contextlib import asynccontextmanager
 import datetime
 import httpx
+import secrets
 import time
 import os
 import logging
@@ -2983,6 +2985,235 @@ async def lease_renewal_workflow_endpoint(
         status_code = 503 if ("GOOGLE_API_KEY" in error_msg or "not installed" in error_msg) else 500
         raise HTTPException(status_code=status_code, detail=error_msg)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Team Invitations
+# ---------------------------------------------------------------------------
+
+class InviteRequest(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    name: str
+    password: str
+
+
+class InvitationOut(BaseModel):
+    id: int
+    email: str
+    role: str
+    status: str
+    created_at: str
+    expires_at: str
+    invited_by_email: str
+
+
+def _require_org_owner(db: Session, user: User, organization: Organization) -> None:
+    """Raise 403 if the current user is not an Owner of the organization."""
+    role = (
+        db.query(UserRole)
+        .filter(
+            UserRole.user_id == user.id,
+            UserRole.organization_id == organization.id,
+        )
+        .first()
+    )
+    if not role or role.role != "Owner":
+        raise HTTPException(status_code=403, detail="Only organization owners can perform this action")
+
+
+def _serialize_invitation(inv: "Invitation", invited_by_email: str) -> dict:
+    return {
+        "id": inv.id,
+        "email": inv.email,
+        "role": inv.role,
+        "status": inv.status,
+        "created_at": inv.created_at.isoformat() if inv.created_at else "",
+        "expires_at": inv.expires_at.isoformat() if inv.expires_at else "",
+        "invited_by_email": invited_by_email,
+    }
+
+
+@app.post("/api/invitations", status_code=201)
+async def create_invitation(
+    body: InviteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
+):
+    _require_org_owner(db, current_user, organization)
+
+    # Basic email format validation
+    email = body.email.strip().lower()
+    if "@" not in email or "." not in email.split("@", 1)[-1]:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    # Check for existing pending invitation
+    existing_invite = (
+        db.query(Invitation)
+        .filter(
+            Invitation.org_id == organization.id,
+            Invitation.email == email,
+            Invitation.status == "pending",
+        )
+        .first()
+    )
+    if existing_invite:
+        raise HTTPException(status_code=400, detail="A pending invitation already exists for this email")
+
+    # Check if already a member
+    existing_member = (
+        db.query(User)
+        .join(UserRole, User.id == UserRole.user_id)
+        .filter(
+            User.email == email,
+            UserRole.organization_id == organization.id,
+        )
+        .first()
+    )
+    if existing_member:
+        raise HTTPException(status_code=400, detail="This email is already a member of the organization")
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    inv = Invitation(
+        org_id=organization.id,
+        email=email,
+        token=token,
+        role=body.role or "member",
+        invited_by_id=current_user.id,
+        expires_at=expires_at,
+        status="pending",
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+
+    invite_link = f"{PUBLIC_APP_URL.rstrip('/')}/accept-invite?token={token}"
+    try:
+        from email_service import send_email
+        send_email(
+            to=email,
+            subject=f"You've been invited to join {organization.name} on Elara",
+            body=(
+                f"<p>Hi,</p>"
+                f"<p>You've been invited to join <strong>{organization.name}</strong> on Elara "
+                f"as a <strong>{body.role or 'member'}</strong>.</p>"
+                f"<p>Click the link below to accept your invitation. "
+                f"This link expires in 7 days.</p>"
+                f'<p><a href="{invite_link}">{invite_link}</a></p>'
+                f"<p>If you did not expect this invitation, you can safely ignore this email.</p>"
+            ),
+        )
+    except Exception:
+        logger.exception("Failed to send invite email to %s", email)
+
+    return _serialize_invitation(inv, current_user.email)
+
+
+@app.get("/api/invitations")
+async def list_invitations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
+):
+    _require_org_owner(db, current_user, organization)
+
+    invitations = (
+        db.query(Invitation)
+        .filter(
+            Invitation.org_id == organization.id,
+            Invitation.status != "revoked",
+        )
+        .all()
+    )
+
+    result = []
+    for inv in invitations:
+        inviter = db.query(User).filter(User.id == inv.invited_by_id).first()
+        invited_by_email = inviter.email if inviter else ""
+        result.append(_serialize_invitation(inv, invited_by_email))
+    return result
+
+
+@app.delete("/api/invitations/{invitation_id}")
+async def revoke_invitation(
+    invitation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
+):
+    _require_org_owner(db, current_user, organization)
+
+    inv = (
+        db.query(Invitation)
+        .filter(
+            Invitation.id == invitation_id,
+            Invitation.org_id == organization.id,
+        )
+        .first()
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invitation not found")
+
+    inv.status = "revoked"
+    db.commit()
+    return {"message": "Invitation revoked"}
+
+
+@app.post("/api/invitations/accept")
+async def accept_invitation(
+    body: AcceptInviteRequest,
+    db: Session = Depends(get_db),
+):
+    inv = (
+        db.query(Invitation)
+        .filter(Invitation.token == body.token)
+        .first()
+    )
+    if not inv or inv.status != "pending" or datetime.datetime.utcnow() > inv.expires_at:
+        raise HTTPException(status_code=400, detail="Invalid or expired invitation")
+
+    organization = db.query(Organization).filter(Organization.id == inv.org_id).first()
+    if not organization:
+        raise HTTPException(status_code=400, detail="Invalid or expired invitation")
+
+    existing_user = db.query(User).filter(User.email == inv.email).first()
+    if existing_user:
+        # User already exists — just add them to the org if not already a member
+        already_member = (
+            db.query(UserRole)
+            .filter(
+                UserRole.user_id == existing_user.id,
+                UserRole.organization_id == organization.id,
+            )
+            .first()
+        )
+        if not already_member:
+            db.add(UserRole(user_id=existing_user.id, organization_id=organization.id, role=inv.role))
+        target_user = existing_user
+    else:
+        # Create new user
+        _validate_password_strength(body.password, inv.email)
+        target_user = User(
+            email=inv.email,
+            hashed_password=hash_password(body.password),
+            account_type="admin",
+        )
+        db.add(target_user)
+        db.flush()
+        db.add(UserRole(user_id=target_user.id, organization_id=organization.id, role=inv.role))
+
+    inv.status = "accepted"
+    inv.accepted_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(target_user)
+
+    return {"access_token": create_token(target_user), "token_type": "bearer"}
 
 
 # ---------------------------------------------------------------------------
