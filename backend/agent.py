@@ -69,11 +69,17 @@ def _humanize_delta(target: datetime.date) -> str:
     return f"{delta // 30} month{'s' if delta // 30 > 1 else ''} ago"
 
 
+def _scope_query(query, model, organization_id: Optional[int]):
+    if organization_id is None or not hasattr(model, "organization_id"):
+        return query
+    return query.filter(model.organization_id == organization_id)
+
+
 # ---------------------------------------------------------------------------
 # Rule-based insights (dashboard alerts)
 # ---------------------------------------------------------------------------
 
-def generate_insights(db: Session) -> List[Dict[str, Any]]:
+def generate_insights(db: Session, organization_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """Build the agent-alert feed from the live DB."""
     today = datetime.date.today()
     sixty_days = today + datetime.timedelta(days=60)
@@ -81,9 +87,9 @@ def generate_insights(db: Session) -> List[Dict[str, Any]]:
     alerts: List[Dict[str, Any]] = []
     next_id = 1
 
-    properties = db.query(Property).all()
-    tenants = db.query(Tenant).all()
-    transactions = db.query(Transaction).all()
+    properties = _scope_query(db.query(Property), Property, organization_id).all()
+    tenants = _scope_query(db.query(Tenant), Tenant, organization_id).all()
+    transactions = _scope_query(db.query(Transaction), Transaction, organization_id).all()
 
     # 1. Lease-expiration warnings.
     for t in tenants:
@@ -205,6 +211,7 @@ def draft_renewal_letter(
     tenant_id: int,
     db: Session,
     market_rent: Optional[float] = None,
+    organization_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Draft a professional lease renewal letter using Gemini.
 
@@ -217,11 +224,11 @@ def draft_renewal_letter(
 
     On missing API key or package, returns an error dict with key "error".
     """
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    tenant = _scope_query(db.query(Tenant), Tenant, organization_id).filter(Tenant.id == tenant_id).first()
     if not tenant:
         return {"error": f"Tenant {tenant_id} not found."}
 
-    prop = db.query(Property).filter(Property.id == tenant.property_id).first()
+    prop = _scope_query(db.query(Property), Property, organization_id).filter(Property.id == tenant.property_id).first()
     prop_address = prop.address if prop else "the property"
 
     today = datetime.date.today()
@@ -283,15 +290,19 @@ Requirements:
     }
 
 
-def get_portfolio_advice(db: Session) -> Dict[str, Any]:
+def get_portfolio_advice(db: Session, organization_id: Optional[int] = None) -> Dict[str, Any]:
     """Provide high-level strategic advice for the entire portfolio using Gemini."""
-    properties = db.query(Property).all()
-    tenants = db.query(Tenant).all()
-    transactions = db.query(Transaction).all()
+    properties = _scope_query(db.query(Property), Property, organization_id).all()
+    tenants = _scope_query(db.query(Tenant), Tenant, organization_id).all()
+    transactions = _scope_query(db.query(Transaction), Transaction, organization_id).all()
 
     total_value = sum(p.purchase_price or 0 for p in properties)
     total_units = len(properties)
-    occupied_units = len([t for t in tenants if t.property_id])
+    today = datetime.date.today()
+    occupied_units = len([
+        t for t in tenants
+        if t.property_id and (t.lease_end is None or t.lease_end >= today)
+    ])
     occupancy_rate = (occupied_units / total_units * 100) if total_units > 0 else 0
 
     today = datetime.date.today()
@@ -317,7 +328,7 @@ Portfolio Summary:
 - Last 30 Days Expenses: ${monthly_expense:,.2f}
 
 Recent Alerts:
-{chr(10).join([f"- {a['title']}: {a['description']}" for a in generate_insights(db)[:5]])}
+{chr(10).join([f"- {a['title']}: {a['description']}" for a in generate_insights(db, organization_id=organization_id)[:5]])}
 
 Requirements:
 - Professional, data-driven tone.
@@ -401,7 +412,7 @@ def extract_document_data(storage_path: str) -> Dict[str, Any]:
         "confidence": 0.0,
     }
 
-    upload_dir = os.path.join(os.path.dirname(__file__), "uploads")
+    upload_dir = os.path.abspath(os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads")))
     full_path = os.path.join(upload_dir, storage_path)
 
     if not os.path.exists(full_path):
@@ -523,7 +534,7 @@ def _generate_alert_text(
         return fallback
 
 
-def analyze_maintenance_health(db: Session) -> List[Dict[str, Any]]:
+def analyze_maintenance_health(db: Session, organization_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """Scan trailing-12-month transactions for spending anomalies per property.
 
     Flags any expense category where (category_expenses / gross_income) > 0.15.
@@ -537,9 +548,9 @@ def analyze_maintenance_health(db: Session) -> List[Dict[str, Any]]:
     today = datetime.date.today()
     twelve_months_ago = today - datetime.timedelta(days=365)
 
-    properties = db.query(Property).all()
+    properties = _scope_query(db.query(Property), Property, organization_id).all()
     transactions = (
-        db.query(Transaction)
+        _scope_query(db.query(Transaction), Transaction, organization_id)
         .filter(
             Transaction.transaction_date >= twelve_months_ago,
             Transaction.status == "Paid",
@@ -676,12 +687,17 @@ def _build_portfolio_tools():
         return None
 
 
-def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
+def _dispatch_tool(
+    tool_name: str,
+    args: dict,
+    db: Session,
+    organization_id: Optional[int] = None,
+) -> Any:
     """Execute a portfolio tool and return a JSON-serializable value."""
     today = datetime.date.today()
 
     if tool_name == "get_properties":
-        properties = db.query(Property).all()
+        properties = _scope_query(db.query(Property), Property, organization_id).all()
         return [
             {
                 "id": p.id,
@@ -695,7 +711,7 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
         ]
 
     if tool_name == "get_tenants":
-        tenants = db.query(Tenant).all()
+        tenants = _scope_query(db.query(Tenant), Tenant, organization_id).all()
         return [
             {
                 "id": t.id,
@@ -713,7 +729,7 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
     if tool_name == "get_transactions":
         property_id = args.get("property_id")
         limit = min(int(args.get("limit") or 50), 200)
-        query = db.query(Transaction).order_by(Transaction.transaction_date.desc())
+        query = _scope_query(db.query(Transaction), Transaction, organization_id).order_by(Transaction.transaction_date.desc())
         if property_id:
             query = query.filter(Transaction.property_id == int(property_id))
         txns = query.limit(limit).all()
@@ -732,9 +748,9 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
         ]
 
     if tool_name == "get_portfolio_summary":
-        properties = db.query(Property).all()
-        tenants = db.query(Tenant).all()
-        transactions = db.query(Transaction).all()
+        properties = _scope_query(db.query(Property), Property, organization_id).all()
+        tenants = _scope_query(db.query(Tenant), Tenant, organization_id).all()
+        transactions = _scope_query(db.query(Transaction), Transaction, organization_id).all()
 
         total_value = sum(p.purchase_price or 0 for p in properties)
         occupied = sum(
@@ -754,7 +770,7 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
             and (t.type or "").lower() == "expense"
             and t.transaction_date and t.transaction_date >= month_start
         )
-        alerts = generate_insights(db)
+        alerts = generate_insights(db, organization_id=organization_id)
         return {
             "total_properties": len(properties),
             "total_portfolio_value": total_value,
@@ -768,10 +784,10 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
         }
 
     if tool_name == "get_cashflow_by_property":
-        properties = db.query(Property).all()
+        properties = _scope_query(db.query(Property), Property, organization_id).all()
         year_start = datetime.date(today.year, 1, 1)
         transactions = (
-            db.query(Transaction)
+            _scope_query(db.query(Transaction), Transaction, organization_id)
             .filter(Transaction.status == "Paid", Transaction.transaction_date >= year_start)
             .all()
         )
@@ -796,10 +812,166 @@ def _dispatch_tool(tool_name: str, args: dict, db: Session) -> Any:
     return {"error": f"Unknown tool: {tool_name}"}
 
 
+def score_deal(metrics: dict) -> dict:
+    """Score a real estate deal using Gemini and computed financial metrics.
+
+    Args:
+        metrics: dict with keys purchase_price, monthly_rent, monthly_expenses,
+                 down_payment, loan_rate (%), loan_term (months)
+
+    Returns:
+        {"score": int, "recommendation": str, "metrics": {"cap_rate": float,
+         "cash_on_cash": float, "noi": float}}
+    """
+    purchase_price = float(metrics.get("purchase_price") or 0)
+    monthly_rent = float(metrics.get("monthly_rent") or 0)
+    monthly_expenses = float(metrics.get("monthly_expenses") or 0)
+    down_payment = float(metrics.get("down_payment") or 0)
+    loan_rate = float(metrics.get("loan_rate") or 0)
+    loan_term = int(metrics.get("loan_term") or 360)
+
+    annual_income = monthly_rent * 12
+    annual_expenses = monthly_expenses * 12
+    noi = annual_income - annual_expenses
+
+    cap_rate = (noi / purchase_price * 100) if purchase_price > 0 else 0.0
+
+    # Monthly mortgage payment (P&I)
+    loan_principal = purchase_price - down_payment
+    monthly_mortgage = 0.0
+    if loan_principal > 0 and loan_rate > 0:
+        r = (loan_rate / 100) / 12
+        monthly_mortgage = loan_principal * (r * (1 + r) ** loan_term) / ((1 + r) ** loan_term - 1)
+    annual_cash_flow = noi - (monthly_mortgage * 12)
+    cash_on_cash = (annual_cash_flow / down_payment * 100) if down_payment > 0 else 0.0
+
+    computed = {
+        "cap_rate": round(cap_rate, 2),
+        "cash_on_cash": round(cash_on_cash, 2),
+        "noi": round(noi, 2),
+    }
+
+    prompt = f"""You are a real estate investment analyst. Score this deal from 1 (worst) to 10 (best) and provide a one-paragraph recommendation.
+
+Deal Metrics:
+- Purchase Price: ${purchase_price:,.0f}
+- Monthly Rent: ${monthly_rent:,.0f}
+- Monthly Operating Expenses: ${monthly_expenses:,.0f}
+- Down Payment: ${down_payment:,.0f}
+- Loan Rate: {loan_rate:.2f}%
+- Loan Term: {loan_term} months
+
+Computed Metrics:
+- Net Operating Income (NOI, annual): ${noi:,.0f}
+- Cap Rate: {cap_rate:.2f}%
+- Cash-on-Cash Return: {cash_on_cash:.2f}%
+
+Reply with ONLY a JSON object in this exact format:
+{{"score": <integer 1-10>, "recommendation": "<one paragraph>"}}"""
+
+    try:
+        model = _get_gemini_model(
+            system_instruction=(
+                "You are a real estate investment analyst. Reply only with the requested JSON object."
+            )
+        )
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 400},
+        )
+        import json
+        raw = response.text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = json.loads(raw.strip())
+        score = max(1, min(10, int(parsed.get("score", 5))))
+        recommendation = str(parsed.get("recommendation", ""))
+    except RuntimeError as e:
+        return {"error": str(e)}
+    except Exception:
+        score = 5
+        recommendation = (
+            f"Cap rate of {cap_rate:.1f}% and cash-on-cash return of {cash_on_cash:.1f}%. "
+            "Review the deal carefully against local market benchmarks."
+        )
+
+    return {
+        "score": score,
+        "recommendation": recommendation,
+        "metrics": computed,
+    }
+
+
+def lease_renewal_workflow(tenant_id: int, db: Session, organization_id: Optional[int] = None) -> dict:
+    """Run a lease renewal workflow for a tenant using Gemini.
+
+    Returns:
+        {"days_until_expiry": int, "recommended_deadline": str,
+         "pricing_strategy": str, "tenant_intent": str}
+    """
+    tenant = _scope_query(db.query(Tenant), Tenant, organization_id).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        return {"error": f"Tenant {tenant_id} not found."}
+
+    today = datetime.date.today()
+    days_until_expiry = (tenant.lease_end - today).days if tenant.lease_end else 0
+
+    if tenant.lease_end:
+        deadline_date = tenant.lease_end - datetime.timedelta(days=60)
+        if deadline_date < today:
+            deadline_date = today
+        recommended_deadline = deadline_date.isoformat()
+    else:
+        recommended_deadline = today.isoformat()
+
+    prop = _scope_query(db.query(Property), Property, organization_id).filter(
+        Property.id == tenant.property_id
+    ).first()
+    prop_address = prop.address if prop else "the property"
+
+    prompt = f"""You are a property management advisor. Provide a concise pricing strategy (2-3 sentences) for renewing this tenant's lease.
+
+Tenant: {tenant.name}
+Property: {prop_address}
+Current Rent: ${tenant.rent_amount or 0:,.0f}/month
+Days Until Lease Expiry: {days_until_expiry}
+Tenant Intent: {tenant.intent or 'Undecided'}
+
+Reply with only the pricing strategy text — no JSON, no preamble."""
+
+    try:
+        model = _get_gemini_model(
+            system_instruction="You are a property management advisor. Be concise and data-driven."
+        )
+        response = model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 200},
+        )
+        pricing_strategy = response.text.strip()
+    except RuntimeError as e:
+        return {"error": str(e)}
+    except Exception:
+        pricing_strategy = (
+            f"Consider a 3-5% rent increase given current market conditions. "
+            f"Reach out to {tenant.name} at least 60 days before lease end to discuss renewal terms."
+        )
+
+    return {
+        "days_until_expiry": days_until_expiry,
+        "recommended_deadline": recommended_deadline,
+        "pricing_strategy": pricing_strategy,
+        "tenant_intent": tenant.intent or "Undecided",
+    }
+
+
 def portfolio_chat(
     message: str,
     history: List[Dict[str, str]],
     db: Session,
+    organization_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run a multi-turn portfolio assistant conversation using Gemini function calling.
 
@@ -871,7 +1043,7 @@ def portfolio_chat(
                 tool_args = dict(fc.args) if fc.args else {}
                 tools_used.append(tool_name)
 
-                result = _dispatch_tool(tool_name, tool_args, db)
+                result = _dispatch_tool(tool_name, tool_args, db, organization_id=organization_id)
 
                 tool_responses.append(
                     genai.protos.Part(

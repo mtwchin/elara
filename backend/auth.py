@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import logging
 from dotenv import load_dotenv
 load_dotenv()
 from typing import Optional
@@ -14,7 +15,9 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
+from models import User, Organization, UserRole
+
+logger = logging.getLogger("elara.auth")
 
 JWT_SECRET = os.environ.get("RE_PORTFOLIO_JWT_SECRET")
 if not JWT_SECRET:
@@ -40,7 +43,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_token(user: User) -> str:
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     payload = {
         "sub": str(user.id),
         "email": user.email,
@@ -112,8 +115,8 @@ def get_current_user(
             issuer=CLERK_ISSUER,
             options={"require": ["exp", "iss", "sub", "nbf"]}
         )
-    except (jwt.PyJWTError, Exception) as e:
-        print(f"Clerk auth error: {e}")
+    except (jwt.PyJWTError, Exception):
+        logger.exception("Clerk auth failed")
         raise creds_exc
 
     # Clerk may store email in 'email' or 'email_address' claim depending on configuration
@@ -130,6 +133,14 @@ def get_current_user(
         dummy_password = secrets.token_hex(32)
         user = User(email=email, hashed_password=hash_password(dummy_password))
         db.add(user)
+        db.flush()
+        # Create a default organization for the new Clerk user
+        local_part = (email or "User").split("@")[0].replace(".", " ").replace("_", " ").strip()
+        org_name = f"{local_part.title()}'s Portfolio" if local_part else "My Portfolio"
+        org = Organization(name=org_name)
+        db.add(org)
+        db.flush()
+        db.add(UserRole(user_id=user.id, organization_id=org.id, role="Owner"))
         db.commit()
         db.refresh(user)
 

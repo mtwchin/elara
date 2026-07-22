@@ -68,6 +68,7 @@ class Property(Base):
     
     organization_id = Column(Integer, ForeignKey("organizations.id"))
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=True)
+    image_path = Column(String, nullable=True)
 
     organization = relationship("Organization", back_populates="properties")
     portfolio = relationship("Portfolio", back_populates="properties")

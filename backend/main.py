@@ -1,17 +1,30 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import FastAPI, Depends, HTTPException, Request, status, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from database import get_db
-from models import Property, Tenant, Transaction, User, Mortgage, Document, MaintenanceRequest
+from database import Base, engine, get_db
+from models import (
+    Property,
+    Tenant,
+    Transaction,
+    User,
+    Mortgage,
+    Document,
+    MaintenanceRequest,
+    Organization,
+    UserRole,
+)
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any, List
 from collections import defaultdict
+from contextlib import asynccontextmanager
 import datetime
 import httpx
 import time
 import os
+import logging
 from dotenv import load_dotenv
 load_dotenv()
 import asyncio
@@ -19,13 +32,77 @@ import uuid
 import csv
 import io
 import sentry_sdk
+from urllib.parse import quote
+
+logger = logging.getLogger("elara.api")
+
+
+APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).lower()
+DEBUG_REQUEST_LOGS = os.environ.get("DEBUG_REQUEST_LOGS", "false").lower() == "true"
+RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() not in {"0", "false", "no"}
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_AUTH_MAX = int(os.environ.get("RATE_LIMIT_AUTH_MAX", "20"))
+RATE_LIMIT_AI_MAX = int(os.environ.get("RATE_LIMIT_AI_MAX", "60"))
+RATE_LIMIT_UPLOAD_MAX = int(os.environ.get("RATE_LIMIT_UPLOAD_MAX", "60"))
+RATE_LIMIT_MARKET_MAX = int(os.environ.get("RATE_LIMIT_MARKET_MAX", "180"))
+RATE_LIMIT_DEFAULT_MAX = int(os.environ.get("RATE_LIMIT_DEFAULT_MAX", "600"))
+MIN_PASSWORD_LENGTH = int(os.environ.get("MIN_PASSWORD_LENGTH", "10"))
+
+
+def _parse_csv_env(name: str, default: List[str]) -> List[str]:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost",
+    "http://localhost:5173",
+    "http://127.0.0.1",
+    "http://127.0.0.1:5173",
+]
+CORS_ORIGINS = _parse_csv_env("CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+PUBLIC_APP_URL = os.environ.get("PUBLIC_APP_URL", "http://localhost")
+
+
+def _is_local_origin(value: str) -> bool:
+    lowered = value.lower()
+    return "localhost" in lowered or "127.0.0.1" in lowered or "[::1]" in lowered
+
+
+def _validate_production_config() -> None:
+    if APP_ENV not in {"production", "prod"}:
+        return
+
+    errors: List[str] = []
+    database_url = os.environ.get("DATABASE_URL", "")
+    jwt_secret = os.environ.get("RE_PORTFOLIO_JWT_SECRET", "")
+
+    if not database_url or database_url.startswith("sqlite"):
+        errors.append("DATABASE_URL must point to a production database")
+    if not os.environ.get("CORS_ORIGINS"):
+        errors.append("CORS_ORIGINS must be explicitly set")
+    if any(_is_local_origin(origin) for origin in CORS_ORIGINS):
+        errors.append("CORS_ORIGINS cannot include localhost in production")
+    if not PUBLIC_APP_URL or _is_local_origin(PUBLIC_APP_URL):
+        errors.append("PUBLIC_APP_URL must be a production URL")
+    if len(jwt_secret) < 32 or jwt_secret.startswith("change_me"):
+        errors.append("RE_PORTFOLIO_JWT_SECRET must be a strong production secret")
+
+    if errors:
+        raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
+
+
+_validate_production_config()
 
 sentry_dsn = os.environ.get("SENTRY_DSN")
 if sentry_dsn:
     sentry_sdk.init(
         dsn=sentry_dsn,
-        traces_sample_rate=1.0,
-        profiles_sample_rate=1.0,
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        profiles_sample_rate=float(os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
+        environment=APP_ENV,
     )
 
 from agent import (
@@ -35,6 +112,8 @@ from agent import (
     analyze_maintenance_health,
     get_portfolio_advice,
     portfolio_chat,
+    score_deal,
+    lease_renewal_workflow,
 )
 from auth import (
     create_token,
@@ -43,23 +122,174 @@ from auth import (
     verify_password,
 )
 
-app = FastAPI(title="Elara API")
+def _sync_sqlite_dev_schema() -> None:
+    """Keep older local SQLite databases usable while Alembic handles deploys."""
+    if engine.url.get_backend_name() != "sqlite" or APP_ENV in {"production", "prod"}:
+        return
+
+    Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            existing_columns = {
+                row[1]
+                for row in conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")').fetchall()
+            }
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                conn.exec_driver_sql(
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}'
+                )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _sync_sqlite_dev_schema()
+    yield
+
+
+app = FastAPI(title="Elara API", lifespan=lifespan)
+
+
+_RATE_LIMIT_BUCKETS: Dict[str, tuple[int, float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit_for_request(request: Request) -> Optional[tuple[str, int]]:
+    path = request.url.path
+    method = request.method.upper()
+    if method == "OPTIONS" or path in {"/api/health", "/api/ready", "/docs", "/openapi.json"}:
+        return None
+    if path.startswith("/api/auth/login") or path == "/api/auth/register":
+        return ("auth", RATE_LIMIT_AUTH_MAX)
+    if path.startswith("/api/agents/"):
+        return ("ai", RATE_LIMIT_AI_MAX)
+    if method == "POST" and "/documents" in path:
+        return ("upload", RATE_LIMIT_UPLOAD_MAX)
+    if path in {"/api/dashboard", "/api/market-data"}:
+        return ("market", RATE_LIMIT_MARKET_MAX)
+    return ("default", RATE_LIMIT_DEFAULT_MAX)
+
+
+def _check_rate_limit(request: Request) -> Optional[JSONResponse]:
+    if not RATE_LIMIT_ENABLED:
+        return None
+
+    config = _rate_limit_for_request(request)
+    if config is None:
+        return None
+
+    group, limit = config
+    if limit <= 0:
+        return None
+
+    now = time.monotonic()
+    key = f"{group}:{_client_ip(request)}"
+    count, reset_at = _RATE_LIMIT_BUCKETS.get(key, (0, now + RATE_LIMIT_WINDOW_SECONDS))
+
+    if now >= reset_at:
+        count = 0
+        reset_at = now + RATE_LIMIT_WINDOW_SECONDS
+
+    count += 1
+    _RATE_LIMIT_BUCKETS[key] = (count, reset_at)
+
+    if len(_RATE_LIMIT_BUCKETS) > 5000:
+        expired_keys = [bucket_key for bucket_key, (_, bucket_reset_at) in _RATE_LIMIT_BUCKETS.items() if now >= bucket_reset_at]
+        for bucket_key in expired_keys:
+            _RATE_LIMIT_BUCKETS.pop(bucket_key, None)
+
+    remaining = max(0, limit - count)
+    retry_after = max(1, int(reset_at - now))
+    if count > limit:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please try again shortly."},
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(time.time() + retry_after)),
+            },
+        )
+
+    request.state.rate_limit_headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Reset": str(int(time.time() + retry_after)),
+    }
+    return None
+
 
 @app.middleware("http")
-async def debug_logging(request, call_next):
-    print(f"DEBUG: {request.method} {request.url}")
-    # print(f"DEBUG: Headers: {dict(request.headers)}")
-    try:
-        response = await call_next(request)
-        print(f"DEBUG: Response {response.status_code}")
-        return response
-    except Exception as e:
-        print(f"DEBUG: Exception: {e}")
-        raise
+async def request_id_and_rate_limit(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    request.state.request_id = request_id
+
+    limited_response = _check_rate_limit(request)
+    if limited_response:
+        limited_response.headers["X-Request-ID"] = request_id
+        return limited_response
+
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    for header, value in getattr(request.state, "rate_limit_headers", {}).items():
+        response.headers.setdefault(header, value)
+    return response
+
+
+if DEBUG_REQUEST_LOGS:
+    @app.middleware("http")
+    async def debug_logging(request, call_next):
+        logger.info(
+            "request id=%s method=%s url=%s",
+            getattr(request.state, "request_id", "-"),
+            request.method,
+            request.url,
+        )
+        try:
+            response = await call_next(request)
+            logger.info(
+                "response id=%s status=%s",
+                getattr(request.state, "request_id", "-"),
+                response.status_code,
+            )
+            return response
+        except Exception:
+            logger.exception("unhandled request exception")
+            raise
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' *",
+    )
+    if APP_ENV in {"production", "prod"}:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,7 +299,7 @@ app.add_middleware(
 # Upload directory
 # ---------------------------------------------------------------------------
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+UPLOAD_DIR = os.path.abspath(os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads")))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_MIME_TYPES = {
@@ -79,8 +309,30 @@ ALLOWED_MIME_TYPES = {
     "image/heic",
     "image/heif",
 }
-ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".heic"}
+ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".heic", ".heif"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+
+@app.get("/api/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "environment": APP_ENV,
+    }
+
+
+@app.get("/api/ready")
+async def readiness_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("database readiness check failed")
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ready"}
 
 
 # ---------------------------------------------------------------------------
@@ -105,16 +357,56 @@ class TokenResponse(BaseModel):
     account_type: str = "admin"
 
 
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _validate_account_type(account_type: Optional[str]) -> str:
+    normalized = (account_type or "admin").strip().lower()
+    if normalized not in {"admin", "tenant"}:
+        raise HTTPException(status_code=400, detail="Invalid account type")
+    return normalized
+
+
+def _validate_password_strength(password: str, email: str) -> None:
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters long",
+        )
+    if email.split("@", 1)[0].lower() in password.lower():
+        raise HTTPException(status_code=400, detail="Password cannot contain your email name")
+    checks = [
+        any(char.islower() for char in password),
+        any(char.isupper() for char in password),
+        any(char.isdigit() for char in password),
+    ]
+    if sum(checks) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must include uppercase, lowercase, and numeric characters",
+        )
+
+
 @app.post("/api/auth/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == req.email).first()
+    email = _normalize_email(str(req.email))
+    account_type = _validate_account_type(req.account_type)
+    _validate_password_strength(req.password, email)
+
+    existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
-    user = User(email=req.email, hashed_password=hash_password(req.password), account_type=req.account_type)
+    user = User(email=email, hashed_password=hash_password(req.password), account_type=account_type)
     db.add(user)
+    db.flush()
+    organization = Organization(name=_default_organization_name(user.email))
+    db.add(organization)
+    db.flush()
+    db.add(UserRole(user_id=user.id, organization_id=organization.id, role="Owner"))
     db.commit()
     db.refresh(user)
     return TokenResponse(access_token=create_token(user), email=user.email, account_type=user.account_type)
@@ -125,7 +417,7 @@ async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.email == form.username).first()
+    user = db.query(User).filter(User.email == _normalize_email(form.username)).first()
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -136,7 +428,7 @@ async def login(
 
 @app.post("/api/auth/login-json", response_model=TokenResponse)
 async def login_json(req: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == req.email).first()
+    user = db.query(User).filter(User.email == _normalize_email(str(req.email))).first()
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -146,8 +438,19 @@ async def login_json(req: LoginRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/api/auth/me")
-async def me(current: User = Depends(get_current_user)):
-    return {"id": current.id, "email": current.email}
+async def me(
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    organization = ensure_user_organization(db, current)
+    return {
+        "id": current.id,
+        "email": current.email,
+        "organization": {
+            "id": organization.id,
+            "name": organization.name,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -167,9 +470,125 @@ def parse_city_from_address(address: str) -> str:
     return address.strip()
 
 
+def _default_organization_name(email: str) -> str:
+    local_part = (email or "User").split("@")[0].replace(".", " ").replace("_", " ").strip()
+    display = local_part.title() if local_part else "User"
+    return f"{display}'s Portfolio"
+
+
+def ensure_user_organization(db: Session, user: User) -> Organization:
+    role = (
+        db.query(UserRole)
+        .filter(UserRole.user_id == user.id)
+        .order_by(UserRole.id.asc())
+        .first()
+    )
+    if role:
+        organization = db.query(Organization).filter(Organization.id == role.organization_id).first()
+        if organization:
+            _claim_unscoped_demo_data(db, user, organization)
+            return organization
+
+    organization = Organization(name=_default_organization_name(user.email))
+    db.add(organization)
+    db.flush()
+    db.add(UserRole(user_id=user.id, organization_id=organization.id, role="Owner"))
+    db.commit()
+    db.refresh(organization)
+    _claim_unscoped_demo_data(db, user, organization)
+    return organization
+
+
+def _claim_unscoped_demo_data(db: Session, user: User, organization: Organization) -> None:
+    if APP_ENV in {"production", "prod"} or user.email != "demo@example.com":
+        return
+
+    updated = 0
+    for model in (Property, Tenant, Transaction):
+        updated += (
+            db.query(model)
+            .filter(model.organization_id.is_(None))
+            .update({"organization_id": organization.id}, synchronize_session=False)
+        )
+    if updated:
+        db.commit()
+
+
+def get_current_organization(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Organization:
+    return ensure_user_organization(db, current_user)
+
+
+def _org_property_query(db: Session, organization: Organization):
+    return db.query(Property).filter(Property.organization_id == organization.id)
+
+
+def _org_tenant_query(db: Session, organization: Organization):
+    return db.query(Tenant).filter(Tenant.organization_id == organization.id)
+
+
+def _org_transaction_query(db: Session, organization: Organization):
+    return db.query(Transaction).filter(Transaction.organization_id == organization.id)
+
+
+def _get_property_or_404(property_id: int, db: Session, organization: Organization) -> Property:
+    prop = _org_property_query(db, organization).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return prop
+
+
+def _get_tenant_or_404(tenant_id: int, db: Session, organization: Organization) -> Tenant:
+    tenant = _org_tenant_query(db, organization).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+def _get_transaction_or_404(transaction_id: int, db: Session, organization: Organization) -> Transaction:
+    tx = _org_transaction_query(db, organization).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return tx
+
+
+def _get_maintenance_request_or_404(
+    request_id: int,
+    db: Session,
+    organization: Organization,
+) -> MaintenanceRequest:
+    req = db.query(MaintenanceRequest).filter(MaintenanceRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Maintenance request not found")
+    _get_property_or_404(req.property_id, db, organization)
+    return req
+
+
+def _get_document_or_404(document_id: int, db: Session, organization: Organization) -> Document:
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.transaction_id:
+        _get_transaction_or_404(doc.transaction_id, db, organization)
+    elif doc.property_id:
+        _get_property_or_404(doc.property_id, db, organization)
+    else:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+def _safe_download_filename(filename: Optional[str]) -> str:
+    base = os.path.basename(filename or "document")
+    base = base.replace("\r", "").replace("\n", "").replace('"', "")
+    return base or "document"
+
+
 # Global market data cache
 MARKET_DATA_CACHE: Dict[str, tuple[Dict[str, Any], float]] = {}
 MARKET_DATA_CACHE_TTL = 24 * 3600  # 24 hours
+MARKET_DATA_TIMEOUT_SECONDS = float(os.environ.get("MARKET_DATA_TIMEOUT_SECONDS", "5.0"))
 
 DEFAULT_FALLBACK_DATA = {
     "cityAveragePrice": 850000.0,
@@ -291,7 +710,10 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            response = await client.get(url, params={"city": city}, headers=headers)
+            response = await asyncio.wait_for(
+                client.get(url, params={"city": city}, headers=headers),
+                timeout=MARKET_DATA_TIMEOUT_SECONDS,
+            )
             if response.status_code == 200:
                 raw_data = response.json()
                 sanitized = sanitize_market_data(raw_data)
@@ -310,6 +732,9 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
             else:
                 print(f"Zillow API error: {response.status_code} - {response.text}")
                 return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
+        except (httpx.TimeoutException, asyncio.TimeoutError) as e:
+            print(f"Zillow fetch timeout: {e}")
+            return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
         except Exception as e:
             print(f"Zillow fetch exception: {e}")
             return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
@@ -319,11 +744,16 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
 # Dashboard
 # ---------------------------------------------------------------------------
 
-async def _compute_dashboard_metrics(db: Session, alerts: list) -> dict:
+async def _compute_dashboard_metrics(db: Session, alerts: list, organization_id: int) -> dict:
     today = datetime.date.today()
-    properties = db.query(Property).order_by(Property.id).all()
-    tenants = db.query(Tenant).all()
-    transactions = db.query(Transaction).all()
+    properties = (
+        db.query(Property)
+        .filter(Property.organization_id == organization_id)
+        .order_by(Property.id)
+        .all()
+    )
+    tenants = db.query(Tenant).filter(Tenant.organization_id == organization_id).all()
+    transactions = db.query(Transaction).filter(Transaction.organization_id == organization_id).all()
 
     total_portfolio_value = sum(p.purchase_price or 0 for p in properties)
 
@@ -431,11 +861,11 @@ async def _compute_dashboard_metrics(db: Session, alerts: list) -> dict:
 @app.get("/api/dashboard")
 async def get_dashboard(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     alerts = []
-    base = await _compute_dashboard_metrics(db, alerts)
-    db_alerts = generate_insights(db)
+    base = await _compute_dashboard_metrics(db, alerts, organization.id)
+    db_alerts = generate_insights(db, organization_id=organization.id)
     base["alerts"] = db_alerts + alerts
     return base
 
@@ -479,6 +909,7 @@ def _property_status(prop: Property, db: Session) -> str:
     active_tenant = (
         db.query(Tenant)
         .filter(Tenant.property_id == prop.id)
+        .filter(Tenant.organization_id == prop.organization_id)
         .filter(Tenant.lease_start <= today)
         .filter(Tenant.lease_end >= today)
         .first()
@@ -502,9 +933,9 @@ def _serialize_property(p: Property, db: Session) -> dict:
 @app.get("/api/properties")
 async def get_properties(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    properties = db.query(Property).all()
+    properties = _org_property_query(db, organization).all()
     return [_serialize_property(p, db) for p in properties]
 
 
@@ -512,11 +943,9 @@ async def get_properties(
 async def get_property(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = _get_property_or_404(property_id, db, organization)
     return _serialize_property(prop, db)
 
 
@@ -524,7 +953,7 @@ async def get_property(
 async def create_property(
     prop: PropertyCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     db_prop = Property(
         address=prop.address,
@@ -532,6 +961,7 @@ async def create_property(
         purchase_price=prop.purchasePrice,
         purchase_date=prop.purchaseDate,
         status=prop.status,
+        organization_id=organization.id,
     )
     db.add(db_prop)
     db.commit()
@@ -544,11 +974,9 @@ async def update_property(
     property_id: int,
     body: PropertyUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = _get_property_or_404(property_id, db, organization)
     if body.address is not None:
         prop.address = body.address
     if body.propertyType is not None:
@@ -568,11 +996,9 @@ async def update_property(
 async def delete_property(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    prop = _get_property_or_404(property_id, db, organization)
     db.delete(prop)
     db.commit()
 
@@ -620,11 +1046,9 @@ def _serialize_mortgage(m: Mortgage) -> dict:
 async def get_mortgage(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
     m = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if not m:
         return None
@@ -636,11 +1060,9 @@ async def create_mortgage(
     property_id: int,
     body: MortgageCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
     existing = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if existing:
         raise HTTPException(status_code=409, detail="Mortgage already exists. Use PUT to update.")
@@ -665,8 +1087,9 @@ async def update_mortgage(
     property_id: int,
     body: MortgageUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
+    _get_property_or_404(property_id, db, organization)
     m = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="No mortgage found for this property")
@@ -693,8 +1116,9 @@ async def update_mortgage(
 async def delete_mortgage(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
+    _get_property_or_404(property_id, db, organization)
     m = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="No mortgage found for this property")
@@ -733,9 +1157,9 @@ def _serialize_tenant(t: Tenant, db: Session) -> dict:
 @app.get("/api/tenants")
 async def get_tenants(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    tenants = db.query(Tenant).all()
+    tenants = _org_tenant_query(db, organization).all()
     return [_serialize_tenant(t, db) for t in tenants]
 
 
@@ -743,11 +1167,9 @@ async def get_tenants(
 async def get_tenant(
     tenant_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    t = _get_tenant_or_404(tenant_id, db, organization)
     return _serialize_tenant(t, db)
 
 
@@ -779,17 +1201,16 @@ class TenantUpdate(BaseModel):
 async def create_tenant(
     body: TenantCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == body.property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(body.property_id, db, organization)
     t = Tenant(
         name=body.name,
         email=body.email,
         phone=body.phone,
         property_id=body.property_id,
         user_id=body.user_id,
+        organization_id=organization.id,
         lease_start=body.lease_start,
         lease_end=body.lease_end,
         rent_amount=body.rent_amount,
@@ -806,11 +1227,9 @@ async def update_tenant(
     tenant_id: int,
     body: TenantUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    t = _get_tenant_or_404(tenant_id, db, organization)
     if body.name is not None:
         t.name = body.name
     if body.email is not None:
@@ -818,9 +1237,7 @@ async def update_tenant(
     if body.phone is not None:
         t.phone = body.phone
     if body.property_id is not None:
-        prop = db.query(Property).filter(Property.id == body.property_id).first()
-        if not prop:
-            raise HTTPException(status_code=404, detail="Property not found")
+        _get_property_or_404(body.property_id, db, organization)
         t.property_id = body.property_id
     if body.user_id is not None:
         t.user_id = body.user_id
@@ -841,11 +1258,9 @@ async def update_tenant(
 async def delete_tenant(
     tenant_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    t = _get_tenant_or_404(tenant_id, db, organization)
     db.delete(t)
     db.commit()
 
@@ -858,12 +1273,10 @@ async def delete_tenant(
 async def screen_tenant(
     tenant_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     import random
-    t = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    t = _get_tenant_or_404(tenant_id, db, organization)
     
     await asyncio.sleep(1) # simulate latency
     score = random.randint(600, 800)
@@ -912,9 +1325,14 @@ def _serialize_maintenance(m: MaintenanceRequest) -> dict:
 @app.get("/api/maintenance")
 async def get_maintenance_requests(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    requests = db.query(MaintenanceRequest).all()
+    requests = (
+        db.query(MaintenanceRequest)
+        .join(Property, MaintenanceRequest.property_id == Property.id)
+        .filter(Property.organization_id == organization.id)
+        .all()
+    )
     return [_serialize_maintenance(r) for r in requests]
 
 
@@ -922,8 +1340,13 @@ async def get_maintenance_requests(
 async def create_maintenance_request(
     body: MaintenanceRequestCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
+    _get_property_or_404(body.property_id, db, organization)
+    if body.tenant_id is not None:
+        tenant = _get_tenant_or_404(body.tenant_id, db, organization)
+        if tenant.property_id != body.property_id:
+            raise HTTPException(status_code=400, detail="Tenant is not assigned to this property")
     req = MaintenanceRequest(
         property_id=body.property_id,
         tenant_id=body.tenant_id,
@@ -943,14 +1366,17 @@ async def update_maintenance_request(
     request_id: int,
     body: MaintenanceRequestUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    req = db.query(MaintenanceRequest).filter(MaintenanceRequest.id == request_id).first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Maintenance request not found")
+    req = _get_maintenance_request_or_404(request_id, db, organization)
     if body.property_id is not None:
+        _get_property_or_404(body.property_id, db, organization)
         req.property_id = body.property_id
     if body.tenant_id is not None:
+        tenant = _get_tenant_or_404(body.tenant_id, db, organization)
+        target_property_id = body.property_id if body.property_id is not None else req.property_id
+        if tenant.property_id != target_property_id:
+            raise HTTPException(status_code=400, detail="Tenant is not assigned to this property")
         req.tenant_id = body.tenant_id
     if body.title is not None:
         req.title = body.title
@@ -972,9 +1398,9 @@ async def update_maintenance_request(
 @app.post("/api/bank/sync")
 async def sync_bank(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    properties = db.query(Property).all()
+    properties = _org_property_query(db, organization).all()
     if not properties:
         return {"synced": 0, "message": "No properties found to sync rent"}
     
@@ -985,6 +1411,7 @@ async def sync_bank(
         prop = random.choice(properties)
         tx = Transaction(
             property_id=prop.id,
+            organization_id=organization.id,
             transaction_date=today,
             amount=random.choice([1200.0, 1500.0, 2500.0, 3200.0]),
             category="Rent",
@@ -1002,8 +1429,8 @@ async def sync_bank(
 # Agents (AI endpoints)
 # ---------------------------------------------------------------------------
 
-@app.get("/agents")
-async def get_agents(_user: User = Depends(get_current_user)):
+@app.get("/api/agents")
+async def get_agents(_organization: Organization = Depends(get_current_organization)):
     return {"agents": []}
 
 
@@ -1015,7 +1442,7 @@ class RenewalLetterRequest(BaseModel):
 async def renewal_letter(
     body: RenewalLetterRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Draft a lease renewal letter using Claude.
 
@@ -1023,13 +1450,11 @@ async def renewal_letter(
     current rent +3% if Zillow is unavailable or RAPIDAPI_KEY is unset).
     Returns 503 when ANTHROPIC_API_KEY is missing.
     """
-    tenant = db.query(Tenant).filter(Tenant.id == body.tenant_id).first()
-    if not tenant:
-        raise HTTPException(status_code=404, detail=f"Tenant {body.tenant_id} not found")
+    tenant = _get_tenant_or_404(body.tenant_id, db, organization)
 
     # Try to get market rent from Zillow
     market_rent: Optional[float] = None
-    prop = db.query(Property).filter(Property.id == tenant.property_id).first()
+    prop = _get_property_or_404(tenant.property_id, db, organization)
     if prop:
         dummy_alerts: list = []
         city = parse_city_from_address(prop.address)
@@ -1038,7 +1463,7 @@ async def renewal_letter(
         if zillow_rent and zillow_rent > 0:
             market_rent = float(zillow_rent)
 
-    result = draft_renewal_letter(body.tenant_id, db, market_rent=market_rent)
+    result = draft_renewal_letter(body.tenant_id, db, market_rent=market_rent, organization_id=organization.id)
 
     if "error" in result:
         error_msg = result["error"]
@@ -1058,10 +1483,10 @@ async def renewal_letter(
 @app.get("/api/agents/portfolio-advice")
 async def portfolio_advice(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Get high-level portfolio strategic advice from Gemini."""
-    result = get_portfolio_advice(db)
+    result = get_portfolio_advice(db, organization_id=organization.id)
 
     if "error" in result:
         error_msg = result["error"]
@@ -1073,6 +1498,43 @@ async def portfolio_advice(
         raise HTTPException(status_code=500, detail=error_msg)
 
     return result
+
+
+@app.get("/api/agents/health-check")
+async def portfolio_health_check(
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+):
+    alerts = generate_insights(db, organization_id=organization.id)
+    maintenance_alerts = analyze_maintenance_health(db, organization_id=organization.id)
+    advice = get_portfolio_advice(db, organization_id=organization.id)
+
+    warning_count = len([a for a in alerts if a.get("type") in ("warning", "danger")])
+    executive_summary = (
+        f"Portfolio scan complete: {len(alerts)} active alert"
+        f"{'s' if len(alerts) != 1 else ''}, {len(maintenance_alerts)} maintenance flag"
+        f"{'s' if len(maintenance_alerts) != 1 else ''}, and {warning_count} item"
+        f"{'s' if warning_count != 1 else ''} needing attention."
+    )
+
+    if "error" in advice:
+        portfolio_advice_text = "AI advice is unavailable until GOOGLE_API_KEY is configured."
+    else:
+        portfolio_advice_text = advice.get("advice", "")
+
+    lease_warnings = [
+        {"title": a["title"], "description": a["description"]}
+        for a in alerts
+        if a.get("title") == "Lease Renewal Risk"
+    ]
+
+    return {
+        "executive_summary": executive_summary,
+        "maintenance_alerts": maintenance_alerts,
+        "portfolio_advice": portfolio_advice_text,
+        "lease_warnings": lease_warnings,
+        "generated_at": datetime.datetime.utcnow().isoformat(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1128,9 +1590,9 @@ def _serialize_transaction(t: Transaction, db: Session) -> dict:
 @app.get("/api/transactions")
 async def get_transactions(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    transactions = db.query(Transaction).all()
+    transactions = _org_transaction_query(db, organization).all()
     return [_serialize_transaction(t, db) for t in transactions]
 
 
@@ -1138,11 +1600,9 @@ async def get_transactions(
 async def get_transaction(
     transaction_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    t = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    t = _get_transaction_or_404(transaction_id, db, organization)
     return _serialize_transaction(t, db)
 
 
@@ -1150,10 +1610,12 @@ async def get_transaction(
 async def create_transaction(
     tx: TransactionCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
+    _get_property_or_404(tx.property_id, db, organization)
     new_tx = Transaction(
         property_id=tx.property_id,
+        organization_id=organization.id,
         transaction_date=tx.date,
         amount=tx.amount,
         category=tx.category,
@@ -1172,15 +1634,11 @@ async def update_transaction(
     transaction_id: int,
     body: TransactionUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    tx = _get_transaction_or_404(transaction_id, db, organization)
     if body.property_id is not None:
-        prop = db.query(Property).filter(Property.id == body.property_id).first()
-        if not prop:
-            raise HTTPException(status_code=404, detail="Property not found")
+        _get_property_or_404(body.property_id, db, organization)
         tx.property_id = body.property_id
     if body.date is not None:
         tx.transaction_date = body.date
@@ -1203,11 +1661,9 @@ async def update_transaction(
 async def delete_transaction(
     transaction_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    tx = _get_transaction_or_404(transaction_id, db, organization)
     db.delete(tx)
     db.commit()
 
@@ -1239,11 +1695,9 @@ async def upload_transaction_document(
     transaction_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    tx = _get_transaction_or_404(transaction_id, db, organization)
 
     # Extension check
     _, ext = os.path.splitext(file.filename or "")
@@ -1263,6 +1717,8 @@ async def upload_transaction_document(
     # Normalise heic
     if ext.lower() in (".heic", ".heif"):
         mime_type = "image/heic"
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"MIME type '{mime_type}' not allowed")
 
     # Save with UUID prefix
     safe_filename = f"{uuid.uuid4().hex}{ext.lower()}"
@@ -1297,16 +1753,14 @@ async def sync_document_to_transaction(
     transaction_id: int,
     document_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Apply extracted document data back to the parent Transaction.
 
     Only updates fields where extraction_confidence > 0.7 and the extracted
     value is present. Returns the updated Transaction.
     """
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    tx = _get_transaction_or_404(transaction_id, db, organization)
 
     doc = (
         db.query(Document)
@@ -1339,11 +1793,9 @@ async def sync_document_to_transaction(
 async def list_transaction_documents(
     transaction_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+    _get_transaction_or_404(transaction_id, db, organization)
     docs = db.query(Document).filter(Document.transaction_id == transaction_id).all()
     return [_serialize_document(d) for d in docs]
 
@@ -1353,11 +1805,9 @@ async def upload_property_document(
     property_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
 
     # Extension check
     _, ext = os.path.splitext(file.filename or "")
@@ -1377,6 +1827,8 @@ async def upload_property_document(
     # Normalise heic
     if ext.lower() in (".heic", ".heif"):
         mime_type = "image/heic"
+    if mime_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"MIME type '{mime_type}' not allowed")
 
     # Save with UUID prefix
     safe_filename = f"{uuid.uuid4().hex}{ext.lower()}"
@@ -1401,24 +1853,90 @@ async def upload_property_document(
 async def list_property_documents(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
     docs = db.query(Document).filter(Document.property_id == property_id).all()
     return [_serialize_document(d) for d in docs]
+
+
+_IMAGE_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_IMAGE_ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+@app.post("/api/properties/{property_id}/image")
+async def upload_property_image(
+    property_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+):
+    """Upload a cover image for a property. Accepts JPEG, PNG, GIF, WebP."""
+    prop = _get_property_or_404(property_id, db, organization)
+
+    _, ext = os.path.splitext(file.filename or "")
+    if ext.lower() not in _IMAGE_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' not allowed for images. Accepted: {', '.join(_IMAGE_ALLOWED_EXTENSIONS)}",
+        )
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="Image exceeds 10MB limit")
+
+    mime_type = file.content_type or "application/octet-stream"
+    if mime_type not in _IMAGE_ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail=f"MIME type '{mime_type}' not allowed for images")
+
+    safe_filename = f"{property_id}_{uuid.uuid4().hex}{ext.lower()}"
+    dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+    with open(dest_path, "wb") as f:
+        f.write(contents)
+
+    # Remove old image file if one existed
+    if prop.image_path:
+        old_path = os.path.join(UPLOAD_DIR, prop.image_path)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+
+    prop.image_path = safe_filename
+    db.commit()
+    return {"image_url": f"/api/properties/{property_id}/image"}
+
+
+@app.get("/api/properties/{property_id}/image")
+async def get_property_image(
+    property_id: int,
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+):
+    """Serve the cover image for a property."""
+    prop = _get_property_or_404(property_id, db, organization)
+    if not prop.image_path:
+        raise HTTPException(status_code=404, detail="No image found for this property")
+
+    file_path = os.path.join(UPLOAD_DIR, prop.image_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    _, ext = os.path.splitext(prop.image_path)
+    mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                ".gif": "image/gif", ".webp": "image/webp"}
+    media_type = mime_map.get(ext.lower(), "image/jpeg")
+    return FileResponse(file_path, media_type=media_type)
 
 
 @app.get("/api/documents/{document_id}")
 async def download_document(
     document_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    doc = db.query(Document).filter(Document.id == document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = _get_document_or_404(document_id, db, organization)
     file_path = os.path.join(UPLOAD_DIR, doc.storage_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
@@ -1430,7 +1948,7 @@ async def download_document(
     return StreamingResponse(
         file_iterator(),
         media_type=doc.mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{doc.filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(_safe_download_filename(doc.filename))}"},
     )
 
 
@@ -1438,11 +1956,9 @@ async def download_document(
 async def delete_document(
     document_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
-    doc = db.query(Document).filter(Document.id == document_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = _get_document_or_404(document_id, db, organization)
     file_path = os.path.join(UPLOAD_DIR, doc.storage_path)
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -1461,14 +1977,14 @@ def _normalize_type_check(value: str) -> str:
 @app.get("/api/reports/cashflow")
 async def get_cashflow_report(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     today = datetime.date.today()
     current_year = today.year
     current_month = today.month
 
-    transactions = db.query(Transaction).all()
-    properties = db.query(Property).all()
+    transactions = _org_transaction_query(db, organization).all()
+    properties = _org_property_query(db, organization).all()
 
     report = {
         "portfolio": {
@@ -1589,15 +2105,15 @@ async def get_cashflow_report(
 async def get_rent_roll(
     format: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Rent roll report. ?format=csv returns a downloadable CSV."""
     today = datetime.date.today()
     current_year = today.year
 
-    properties = db.query(Property).all()
-    tenants = db.query(Tenant).all()
-    transactions = db.query(Transaction).filter(
+    properties = _org_property_query(db, organization).all()
+    tenants = _org_tenant_query(db, organization).all()
+    transactions = _org_transaction_query(db, organization).filter(
         Transaction.status == "Paid"
     ).all()
 
@@ -1701,19 +2217,19 @@ async def get_schedule_e(
     year: Optional[int] = Query(None),
     format: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Schedule E formatted expense/income breakdown per property.
     Defaults to current year. ?format=csv returns downloadable CSV.
     """
     target_year = year or datetime.date.today().year
 
-    properties = db.query(Property).all()
-    transactions = db.query(Transaction).filter(
+    properties = _org_property_query(db, organization).all()
+    transactions = _org_transaction_query(db, organization).filter(
         Transaction.status == "Paid"
     ).all()
 
-    tenants = db.query(Tenant).all()
+    tenants = _org_tenant_query(db, organization).all()
     # Determine fair rental days per property (active lease days in target_year)
     year_start = datetime.date(target_year, 1, 1)
     year_end = datetime.date(target_year, 12, 31)
@@ -1814,7 +2330,7 @@ def _ltv_status(ltv: Optional[float]) -> str:
 @app.get("/api/reports/lender-metrics")
 async def get_lender_metrics(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Return DSCR and LTV for each property from a lender's perspective.
 
@@ -1828,9 +2344,9 @@ async def get_lender_metrics(
     today = datetime.date.today()
     twelve_months_ago = today - datetime.timedelta(days=365)
 
-    properties = db.query(Property).all()
+    properties = _org_property_query(db, organization).all()
     transactions = (
-        db.query(Transaction)
+        _org_transaction_query(db, organization)
         .filter(
             Transaction.transaction_date >= twelve_months_ago,
             Transaction.status == "Paid",
@@ -1934,7 +2450,7 @@ def generate_amortization_schedule(
 
     Args:
         principal: Original loan balance.
-        annual_rate: Annual interest rate as a decimal (e.g. 0.065 for 6.5%).
+        annual_rate: Annual interest rate as a percentage (e.g. 6.5 for 6.5%).
         term_months: Loan term in months.
         extra_monthly_payment: Optional additional principal per month (default 0).
 
@@ -1947,7 +2463,7 @@ def generate_amortization_schedule(
     if principal <= 0 or annual_rate < 0 or term_months <= 0:
         return []
 
-    monthly_rate = annual_rate / 1200.0  # annual_rate is decimal e.g. 0.065 → 0.065/12
+    monthly_rate = annual_rate / 1200.0  # annual_rate is a percentage e.g. 6.5 for 6.5%
 
     # PMT formula: M = P * [r(1+r)^n] / [(1+r)^n - 1]
     if monthly_rate == 0:
@@ -2000,12 +2516,10 @@ def generate_amortization_schedule(
 async def get_amortization(
     property_id: int,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Return the full amortization schedule for a property's mortgage."""
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
 
     mortgage = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if not mortgage:
@@ -2032,12 +2546,10 @@ async def amortization_what_if(
     property_id: int,
     body: WhatIfRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Compare standard vs. accelerated payoff with an extra monthly payment."""
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found")
+    _get_property_or_404(property_id, db, organization)
 
     mortgage = db.query(Mortgage).filter(Mortgage.property_id == property_id).first()
     if not mortgage:
@@ -2091,7 +2603,7 @@ async def amortization_what_if(
 @app.get("/api/agents/maintenance-health")
 async def maintenance_health(
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Scan trailing-12-month transactions for spending anomalies.
 
@@ -2099,7 +2611,7 @@ async def maintenance_health(
     gross income at the property level. Alert messages are generated by
     Gemini when GOOGLE_API_KEY is set; otherwise a template is used.
     """
-    alerts = analyze_maintenance_health(db)
+    alerts = analyze_maintenance_health(db, organization_id=organization.id)
     return {"alerts": alerts, "count": len(alerts)}
 
 
@@ -2121,7 +2633,7 @@ class ChatRequest(BaseModel):
 async def portfolio_chat_endpoint(
     body: ChatRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    organization: Organization = Depends(get_current_organization),
 ):
     """Conversational portfolio AI assistant backed by Gemini function calling.
 
@@ -2136,7 +2648,7 @@ async def portfolio_chat_endpoint(
       {"reply": str, "tools_used": List[str]}
     """
     history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
-    result = portfolio_chat(body.message, history, db)
+    result = portfolio_chat(body.message, history, db, organization_id=organization.id)
 
     if "error" in result:
         error_msg = result["error"]
@@ -2145,10 +2657,82 @@ async def portfolio_chat_endpoint(
 
     return result
 
+
+# ---------------------------------------------------------------------------
+# Deal Scorer Agent
+# ---------------------------------------------------------------------------
+
+class DealScoreRequest(BaseModel):
+    purchase_price: float
+    monthly_rent: float
+    monthly_expenses: float
+    down_payment: float
+    loan_rate: float
+    loan_term: Optional[int] = 360
+
+
+@app.post("/api/agents/score-deal")
+async def score_deal_endpoint(
+    body: DealScoreRequest,
+    _organization: Organization = Depends(get_current_organization),
+):
+    """Score a real estate deal with computed metrics and a Gemini recommendation.
+
+    Returns: {"score": int, "recommendation": str, "metrics": {"cap_rate": float,
+              "cash_on_cash": float, "noi": float}}
+    """
+    result = score_deal(body.dict())
+    if "error" in result:
+        error_msg = result["error"]
+        status_code = 503 if ("GOOGLE_API_KEY" in error_msg or "not installed" in error_msg) else 500
+        raise HTTPException(status_code=status_code, detail=error_msg)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Lease Renewal Workflow Agent
+# ---------------------------------------------------------------------------
+
+@app.post("/api/agents/lease-renewal-workflow/{tenant_id}")
+async def lease_renewal_workflow_endpoint(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+):
+    """Run the lease renewal workflow for a tenant.
+
+    Returns: {"days_until_expiry": int, "recommended_deadline": str,
+              "pricing_strategy": str, "tenant_intent": str}
+    """
+    _get_tenant_or_404(tenant_id, db, organization)
+    result = lease_renewal_workflow(tenant_id, db, organization_id=organization.id)
+    if "error" in result:
+        error_msg = result["error"]
+        status_code = 503 if ("GOOGLE_API_KEY" in error_msg or "not installed" in error_msg) else 500
+        raise HTTPException(status_code=status_code, detail=error_msg)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Billing
 # ---------------------------------------------------------------------------
-from fastapi import Request
+from billing import configured_tiers, is_stripe_configured, normalize_tier
+
+
+class BillingCheckoutRequest(BaseModel):
+    tier: str = "Portfolio"
+
+
+@app.get("/api/billing/status")
+async def billing_status(current_user: User = Depends(get_current_user)):
+    return {
+        "subscription_status": current_user.subscription_status or "inactive",
+        "subscription_tier": current_user.subscription_tier or "free",
+        "has_stripe_customer": bool(current_user.stripe_customer_id),
+        "stripe_configured": is_stripe_configured(),
+        "available_tiers": configured_tiers(),
+    }
+
 
 @app.post("/api/billing/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
@@ -2161,29 +2745,71 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
         
-    # Handle the event
-    if event['type'] == 'checkout.session.completed':
+    event_type = event["type"]
+    if event_type == "checkout.session.completed":
         session = event['data']['object']
         client_reference_id = session.get("client_reference_id")
         if client_reference_id:
             user = db.query(User).filter(User.id == int(client_reference_id)).first()
             if user:
+                metadata = session.get("metadata") or {}
+                customer_id = session.get("customer")
+                if customer_id:
+                    user.stripe_customer_id = str(customer_id)
                 user.subscription_status = "active"
-                user.subscription_tier = "Pro"
+                user.subscription_tier = normalize_tier(metadata.get("tier"))
+                db.commit()
+    elif event_type in {"customer.subscription.updated", "customer.subscription.deleted"}:
+        subscription = event["data"]["object"]
+        customer_id = subscription.get("customer")
+        if customer_id:
+            user = db.query(User).filter(User.stripe_customer_id == str(customer_id)).first()
+            if user:
+                metadata = subscription.get("metadata") or {}
+                user.subscription_status = "canceled" if event_type.endswith(".deleted") else subscription.get("status", "inactive")
+                if metadata.get("tier"):
+                    user.subscription_tier = normalize_tier(metadata.get("tier"))
                 db.commit()
 
     return {"status": "success"}
 
 @app.post("/api/billing/create-checkout")
-async def create_checkout(tier: str = "Pro", db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def create_checkout(
+    body: Optional[BillingCheckoutRequest] = None,
+    tier: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+):
     from billing import create_checkout_session
-    url = create_checkout_session(
-        user_id=current_user.id,
-        user_email=current_user.email,
-        tier=tier,
-        success_url="http://localhost:80/billing/success",
-        cancel_url="http://localhost:80/billing/cancel"
-    )
-    if url:
-        return {"url": url}
-    raise HTTPException(status_code=500, detail="Could not create checkout session")
+    selected_tier = body.tier if body else tier
+    try:
+        url = create_checkout_session(
+            user_id=current_user.id,
+            user_email=current_user.email,
+            tier=selected_tier or "Portfolio",
+            success_url=f"{PUBLIC_APP_URL.rstrip('/')}/?billing=success",
+            cancel_url=f"{PUBLIC_APP_URL.rstrip('/')}/?billing=cancel",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        logger.exception("Stripe checkout session creation failed")
+        raise HTTPException(status_code=502, detail="Could not create checkout session")
+    return {"url": url}
+
+
+@app.post("/api/billing/create-portal")
+async def create_billing_portal(current_user: User = Depends(get_current_user)):
+    from billing import create_customer_portal_session
+    if not current_user.stripe_customer_id:
+        raise HTTPException(status_code=404, detail="No Stripe customer found for this user")
+    try:
+        url = create_customer_portal_session(
+            customer_id=current_user.stripe_customer_id,
+            return_url=f"{PUBLIC_APP_URL.rstrip('/')}/?billing=portal",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        logger.exception("Stripe customer portal session creation failed")
+        raise HTTPException(status_code=502, detail="Could not create customer portal session")
+    return {"url": url}

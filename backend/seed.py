@@ -1,28 +1,43 @@
 import datetime
 import os
 from database import SessionLocal, engine, Base
-from models import Property, Tenant, Transaction, User, Mortgage
+from models import Organization, Property, Tenant, Transaction, User, UserRole, Mortgage
 from auth import hash_password
 
 Base.metadata.create_all(bind=engine)
 
 DEMO_EMAIL = "demo@example.com"
-DEMO_PASSWORD = "demo1234"
+DEMO_PASSWORD = "Demo123456!"
 
 
 def seed_db():
     db = SessionLocal()
 
-    if os.environ.get("SEED_DEMO_USER", "false").lower() == "true":
-        if not db.query(User).filter(User.email == DEMO_EMAIL).first():
-            db.add(User(email=DEMO_EMAIL, hashed_password=hash_password(DEMO_PASSWORD)))
-            db.commit()
+    demo_org = None
+    if os.environ.get("SEED_DEMO_USER", "true").lower() == "true":
+        demo_user = db.query(User).filter(User.email == DEMO_EMAIL).first()
+        if not demo_user:
+            demo_user = User(email=DEMO_EMAIL, hashed_password=hash_password(DEMO_PASSWORD))
+            db.add(demo_user)
+            db.flush()
             print(f"Seeded demo user: {DEMO_EMAIL} / {DEMO_PASSWORD}")
+
+        role = db.query(UserRole).filter(UserRole.user_id == demo_user.id).first()
+        if role:
+            demo_org = db.query(Organization).filter(Organization.id == role.organization_id).first()
+        if not demo_org:
+            demo_org = Organization(name="Demo Portfolio")
+            db.add(demo_org)
+            db.flush()
+            db.add(UserRole(user_id=demo_user.id, organization_id=demo_org.id, role="Owner"))
+        db.commit()
 
     if db.query(Property).first():
         print("Database already seeded.")
         db.close()
         return
+
+    organization_id = demo_org.id if demo_org else None
 
     # ------------------------------------------------------------------ #
     # Properties
@@ -33,6 +48,7 @@ def seed_db():
         purchase_price=380000.0,
         purchase_date=datetime.date(2021, 3, 15),
         status="Active",
+        organization_id=organization_id,
     )
     prop2 = Property(
         address="456 Oak Street, Austin, TX",
@@ -40,6 +56,7 @@ def seed_db():
         purchase_price=620000.0,
         purchase_date=datetime.date(2020, 9, 1),
         status="Active",
+        organization_id=organization_id,
     )
     prop3 = Property(
         address="789 Cedar Lane, Austin, TX",
@@ -47,6 +64,7 @@ def seed_db():
         purchase_price=295000.0,
         purchase_date=datetime.date(2023, 6, 20),
         status="Vacant",
+        organization_id=organization_id,
     )
 
     db.add_all([prop1, prop2, prop3])
@@ -58,38 +76,39 @@ def seed_db():
     # ------------------------------------------------------------------ #
     # Mortgages
     # ------------------------------------------------------------------ #
-    def calc_monthly_pi(principal: float, annual_rate: float, term_months: int) -> float:
-        r = annual_rate / 12
+    def calc_monthly_pi(principal: float, annual_rate_pct: float, term_months: int) -> float:
+        # annual_rate_pct is a percentage e.g. 6.25 for 6.25%
+        r = (annual_rate_pct / 100) / 12
         return round(principal * (r * (1 + r) ** term_months) / ((1 + r) ** term_months - 1), 2)
 
     db.add_all([
         Mortgage(
             property_id=prop1.id,
             principal=304000.0,
-            interest_rate=0.0625,
+            interest_rate=6.25,
             term_months=360,
             lender="Lone Star Mortgage",
-            monthly_pi=calc_monthly_pi(304000.0, 0.0625, 360),
+            monthly_pi=calc_monthly_pi(304000.0, 6.25, 360),
             monthly_escrow=340.0,
             origination_date=datetime.date(2021, 3, 15),
         ),
         Mortgage(
             property_id=prop2.id,
             principal=496000.0,
-            interest_rate=0.0675,
+            interest_rate=6.75,
             term_months=360,
             lender="Texas Capital Bank",
-            monthly_pi=calc_monthly_pi(496000.0, 0.0675, 360),
+            monthly_pi=calc_monthly_pi(496000.0, 6.75, 360),
             monthly_escrow=580.0,
             origination_date=datetime.date(2020, 9, 1),
         ),
         Mortgage(
             property_id=prop3.id,
             principal=236000.0,
-            interest_rate=0.0725,
+            interest_rate=7.25,
             term_months=360,
             lender="First National Bank",
-            monthly_pi=calc_monthly_pi(236000.0, 0.0725, 360),
+            monthly_pi=calc_monthly_pi(236000.0, 7.25, 360),
             monthly_escrow=280.0,
             origination_date=datetime.date(2023, 6, 20),
         ),
@@ -107,6 +126,7 @@ def seed_db():
             email="marcus.chen@email.com",
             phone="512-555-0101",
             property_id=prop1.id,
+            organization_id=organization_id,
             lease_start=datetime.date(2025, 8, 1),
             lease_end=datetime.date(2026, 7, 31),
             rent_amount=2400.0,
@@ -117,6 +137,7 @@ def seed_db():
             email="sarah.j@email.com",
             phone="512-555-0102",
             property_id=prop2.id,
+            organization_id=organization_id,
             lease_start=datetime.date(2025, 10, 1),
             lease_end=datetime.date(2026, 9, 30),
             rent_amount=3200.0,
@@ -127,6 +148,7 @@ def seed_db():
             email="devon.w@email.com",
             phone="512-555-0103",
             property_id=prop2.id,
+            organization_id=organization_id,
             lease_start=datetime.date(2025, 6, 1),
             lease_end=datetime.date(2026, 7, 15),   # ~28 days left → renewal alert
             rent_amount=1800.0,
@@ -268,6 +290,7 @@ def seed_db():
     ))
 
     for t in txns:
+        t.organization_id = organization_id
         db.add(t)
     db.commit()
 
