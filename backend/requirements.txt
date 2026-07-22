@@ -16,3 +16,4 @@ celery
 redis
 stripe
 sentry-sdk
+boto3

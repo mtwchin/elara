@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, status, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -362,6 +362,37 @@ app.add_middleware(
 
 UPLOAD_DIR = os.path.abspath(os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(__file__), "uploads")))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# S3 / R2 storage for property images (optional)
+# ---------------------------------------------------------------------------
+
+AWS_S3_BUCKET = os.environ.get("AWS_S3_BUCKET", "")
+AWS_S3_REGION = os.environ.get("AWS_S3_REGION", "us-east-1")
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")  # for Cloudflare R2 / MinIO
+
+
+def _get_s3_client():
+    """Return a boto3 S3 client, or None if S3 is not configured."""
+    if not AWS_S3_BUCKET:
+        return None
+    try:
+        import boto3
+        kwargs: dict = {
+            "region_name": AWS_S3_REGION,
+        }
+        if AWS_ACCESS_KEY_ID:
+            kwargs["aws_access_key_id"] = AWS_ACCESS_KEY_ID
+        if AWS_SECRET_ACCESS_KEY:
+            kwargs["aws_secret_access_key"] = AWS_SECRET_ACCESS_KEY
+        if S3_ENDPOINT_URL:
+            kwargs["endpoint_url"] = S3_ENDPOINT_URL
+        return boto3.client("s3", **kwargs)
+    except Exception as exc:
+        logger.warning("Failed to create S3 client: %s", exc)
+        return None
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -2097,20 +2128,40 @@ async def upload_property_image(
         raise HTTPException(status_code=400, detail=f"MIME type '{mime_type}' not allowed for images")
 
     safe_filename = f"{property_id}_{uuid.uuid4().hex}{ext.lower()}"
-    dest_path = os.path.join(UPLOAD_DIR, safe_filename)
-    with open(dest_path, "wb") as f:
-        f.write(contents)
+    s3 = _get_s3_client()
 
-    # Remove old image file if one existed
-    if prop.image_path:
-        old_path = os.path.join(UPLOAD_DIR, prop.image_path)
-        if os.path.exists(old_path):
+    if s3 is not None:
+        # Upload to S3/R2
+        s3_key = f"properties/{property_id}/{safe_filename}"
+        s3.put_object(
+            Bucket=AWS_S3_BUCKET,
+            Key=s3_key,
+            Body=contents,
+            ContentType=mime_type,
+        )
+        # Remove old S3 object if one existed
+        if prop.image_path and prop.image_path.startswith("s3://"):
+            old_key = prop.image_path.split(f"s3://{AWS_S3_BUCKET}/", 1)[-1]
             try:
-                os.remove(old_path)
-            except OSError:
+                s3.delete_object(Bucket=AWS_S3_BUCKET, Key=old_key)
+            except Exception:
                 pass
+        prop.image_path = f"s3://{AWS_S3_BUCKET}/{s3_key}"
+    else:
+        # Local filesystem
+        dest_path = os.path.join(UPLOAD_DIR, safe_filename)
+        with open(dest_path, "wb") as f:
+            f.write(contents)
+        # Remove old image file if one existed
+        if prop.image_path and not prop.image_path.startswith("s3://"):
+            old_path = os.path.join(UPLOAD_DIR, prop.image_path)
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+        prop.image_path = safe_filename
 
-    prop.image_path = safe_filename
     db.commit()
     return {"image_url": f"/api/properties/{property_id}/image"}
 
@@ -2126,6 +2177,20 @@ async def get_property_image(
     if not prop.image_path:
         raise HTTPException(status_code=404, detail="No image found for this property")
 
+    # S3/R2 path — generate a pre-signed URL and redirect
+    if prop.image_path.startswith("s3://"):
+        s3 = _get_s3_client()
+        if s3 is None:
+            raise HTTPException(status_code=503, detail="S3 storage not available")
+        s3_key = prop.image_path.split(f"s3://{AWS_S3_BUCKET}/", 1)[-1]
+        presigned_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": AWS_S3_BUCKET, "Key": s3_key},
+            ExpiresIn=3600,
+        )
+        return RedirectResponse(url=presigned_url)
+
+    # Local filesystem path
     file_path = os.path.join(UPLOAD_DIR, prop.image_path)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Image file not found on disk")
