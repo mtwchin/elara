@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { AlertTriangle, Info, XCircle, CheckCircle, Sparkles } from 'lucide-react';
 import { authFetch } from '../auth';
 import { notify } from '../toast';
+import Onboarding from './Onboarding';
 
 interface DashboardData {
   metrics: {
@@ -75,6 +76,8 @@ const Dashboard: React.FC = () => {
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
 
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
   useEffect(() => {
     authFetch('/api/dashboard')
       .then((res) => {
@@ -83,6 +86,17 @@ const Dashboard: React.FC = () => {
       })
       .then((json: DashboardData) => { setData(json); setLoading(false); })
       .catch((err) => { console.error(err); setError(err.message); setLoading(false); });
+  }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem('onboarding_dismissed') === 'true') return;
+    authFetch('/api/properties')
+      .then((res) => res.ok ? res.json() : [])
+      .then((list: unknown) => {
+        const arr = Array.isArray(list) ? list : (list as { items?: unknown[] }).items ?? [];
+        if (arr.length === 0) setShowOnboarding(true);
+      })
+      .catch(() => { /* silently skip onboarding check on error */ });
   }, []);
 
   const handleHealthCheck = async () => {
@@ -130,6 +144,8 @@ const Dashboard: React.FC = () => {
 
   const { metrics, chartData, alerts } = data;
 
+  const handleOnboardingDismiss = () => setShowOnboarding(false);
+
   const revenueTrend = () => {
     if (metrics.revenueMomPct === null || metrics.revenueMomPct === undefined) {
       return <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No prior month data</span>;
@@ -145,6 +161,8 @@ const Dashboard: React.FC = () => {
   };
 
   return (
+    <>
+    {showOnboarding && <Onboarding onDismiss={handleOnboardingDismiss} />}
     <div className="app-container fade-in">
       <div className="page-header">
         <div className="page-header-info">
@@ -298,6 +316,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
     </div>
+    </>
   );
 };
 
