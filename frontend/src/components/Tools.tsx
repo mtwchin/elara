@@ -1056,9 +1056,9 @@ const Tools: React.FC = () => {
   const [prefillPurchasePrice, setPrefillPurchasePrice] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    authFetch('/api/properties?limit=500')
-      .then((res) => (res.ok ? res.json() : { items: [] }))
-      .then((data) => setPortfolioProperties(data.items ?? data))
+    authFetch('/api/properties')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setPortfolioProperties(data))
       .catch(() => {});
   }, []);
 

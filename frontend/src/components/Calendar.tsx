@@ -123,13 +123,13 @@ const Calendar: React.FC = () => {
     setError(null);
 
     Promise.all([
-      authFetch('/api/properties?limit=500').then((r) => (r.ok ? r.json() : Promise.reject(new Error('Failed to fetch properties')))),
-      authFetch('/api/tenants?limit=500').then((r) => (r.ok ? r.json() : Promise.reject(new Error('Failed to fetch tenants')))),
+      authFetch('/api/properties').then((r) => (r.ok ? r.json() : Promise.reject(new Error('Failed to fetch properties')))),
+      authFetch('/api/tenants').then((r) => (r.ok ? r.json() : Promise.reject(new Error('Failed to fetch tenants')))),
     ])
       .then(([propsData, tenantsData]) => {
         if (!cancelled) {
-          setProperties(propsData.items ?? propsData);
-          setTenants(tenantsData.items ?? tenantsData);
+          setProperties(propsData);
+          setTenants(tenantsData);
         }
       })
       .catch((e: unknown) => {

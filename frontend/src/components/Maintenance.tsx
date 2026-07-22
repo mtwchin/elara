@@ -3,12 +3,13 @@ import { authFetch } from '../auth';
 
 interface MaintenanceRequest {
   id: number;
-  property_id: number;
-  tenant_id: number | null;
+  propertyId: number;
+  tenantId: number | null;
   title: string;
   description: string;
   status: string;
   priority: string;
+  createdAt: string | null;
 }
 
 interface PropertyOption {

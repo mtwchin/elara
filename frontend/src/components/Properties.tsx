@@ -85,10 +85,10 @@ const Properties: React.FC = () => {
   const fetchProperties = async () => {
     setLoading(true);
     try {
-      const res = await authFetch('/api/properties?limit=500');
+      const res = await authFetch('/api/properties');
       if (!res.ok) throw new Error('Failed to fetch properties');
       const data = await res.json();
-      setProperties(data.items ?? data);
+      setProperties(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {

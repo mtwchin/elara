@@ -32,7 +32,7 @@ interface TenantFormData {
 }
 
 interface RenewalLetterResult {
-  letter: string;
+  letter_text: string;
   tenant: Tenant;
   suggested_rent: number;
 }
@@ -71,7 +71,7 @@ const modalStyle: React.CSSProperties = {
   overflowY: 'auto',
 };
 
-const TODAY = new Date('2026-06-17');
+const TODAY = new Date();
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
 function isWithin90Days(leaseEnd: string | null): boolean {
@@ -479,20 +479,20 @@ const Tenants: React.FC = () => {
                 overflowY: 'auto',
               }}
             >
-              {renewalResult.letter}
+              {renewalResult.letter_text}
             </pre>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button
                 className="btn"
                 onClick={() => {
-                  navigator.clipboard.writeText(renewalResult.letter);
+                  navigator.clipboard.writeText(renewalResult.letter_text);
                 }}
               >
                 Copy to Clipboard
               </button>
               <a
                 className="btn btn-primary"
-                href={`mailto:${renewalResult.tenant?.email || ''}?subject=${encodeURIComponent('Lease Renewal — ' + (renewalResult.tenant?.propertyAssigned || ''))}&body=${encodeURIComponent(renewalResult.letter)}`}
+                href={`mailto:${renewalResult.tenant?.email || ''}?subject=${encodeURIComponent('Lease Renewal — ' + (renewalResult.tenant?.propertyAssigned || ''))}&body=${encodeURIComponent(renewalResult.letter_text)}`}
                 style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
               >
                 Send via Email
