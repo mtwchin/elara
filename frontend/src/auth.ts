@@ -40,10 +40,38 @@ export async function authFetch(input: string, init: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json');
   }
   const url = input.startsWith('http') ? input : `${API_BASE}${input}`;
-  const res = await fetch(url, { ...init, headers });
+  let res = await fetch(url, { ...init, headers });
+
   if (res.status === 401) {
-    clearSession();
-    window.dispatchEvent(new Event('auth:logout'));
+    const currentToken = getToken();
+    if (currentToken) {
+      try {
+        const refreshRes = await fetch(`${API_BASE}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${currentToken}` },
+        });
+        if (refreshRes.ok) {
+          const refreshData = await refreshRes.json();
+          setSession(refreshData.access_token, refreshData.email);
+
+          const retryHeaders = new Headers(init.headers || {});
+          retryHeaders.set('Authorization', `Bearer ${refreshData.access_token}`);
+          if (init.body && !retryHeaders.has('Content-Type')) {
+            retryHeaders.set('Content-Type', 'application/json');
+          }
+          res = await fetch(url, { ...init, headers: retryHeaders });
+        } else {
+          clearSession();
+          window.dispatchEvent(new Event('auth:logout'));
+        }
+      } catch {
+        clearSession();
+        window.dispatchEvent(new Event('auth:logout'));
+      }
+    } else {
+      clearSession();
+      window.dispatchEvent(new Event('auth:logout'));
+    }
   }
   return res;
 }
