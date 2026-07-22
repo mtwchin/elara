@@ -15,10 +15,11 @@ from models import (
     MaintenanceRequest,
     Organization,
     UserRole,
+    PasswordResetToken,
 )
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any, List
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from contextlib import asynccontextmanager
 import datetime
 import httpx
@@ -117,6 +118,7 @@ from agent import (
 )
 from auth import (
     create_token,
+    verify_token,
     get_current_user,
     hash_password,
     verify_password,
@@ -169,6 +171,8 @@ def _rate_limit_for_request(request: Request) -> Optional[tuple[str, int]]:
     method = request.method.upper()
     if method == "OPTIONS" or path in {"/api/health", "/api/ready", "/docs", "/openapi.json"}:
         return None
+    if path in {"/api/webhooks/stripe", "/api/billing/webhook"}:
+        return None  # Stripe signature verification replaces rate limiting
     if path.startswith("/api/auth/login") or path == "/api/auth/register":
         return ("auth", RATE_LIMIT_AUTH_MAX)
     if path.startswith("/api/agents/"):
@@ -437,6 +441,115 @@ async def login_json(req: LoginRequest, db: Session = Depends(get_db)):
     return TokenResponse(access_token=create_token(user), email=user.email, account_type=user.account_type)
 
 
+@app.post("/api/auth/refresh")
+async def refresh_token(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Issue a new token with a fresh expiry given a valid existing Bearer token."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = auth_header[len("Bearer "):]
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token is invalid or expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    email = payload.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token payload missing email claim",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {"access_token": create_token(user), "token_type": "bearer"}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+def _issue_password_reset_token(user: User, db: Session) -> str:
+    """Create a password reset token for the given user, invalidating any prior unused ones."""
+    import secrets as _secrets
+    # Invalidate prior unused tokens for this user
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used == False,  # noqa: E712
+    ).update({"used": True}, synchronize_session=False)
+
+    raw_token = _secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    prt = PasswordResetToken(user_id=user.id, token=raw_token, expires_at=expires_at)
+    db.add(prt)
+    db.commit()
+    return raw_token
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Generate a password reset token and log the reset link.
+
+    Always returns the same response to avoid revealing whether an email exists.
+    """
+    email = _normalize_email(str(req.email))
+    user = db.query(User).filter(User.email == email).first()
+    if user:
+        raw_token = _issue_password_reset_token(user, db)
+        reset_link = f"{PUBLIC_APP_URL.rstrip('/')}/reset-password?token={raw_token}"
+        logger.info("Password reset link for user_id=%s: %s", user.id, reset_link)
+    return {"message": "If that email exists, a reset link has been sent"}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Consume a valid, unexpired reset token and update the user's password."""
+    prt = (
+        db.query(PasswordResetToken)
+        .filter(
+            PasswordResetToken.token == req.token,
+            PasswordResetToken.used == False,  # noqa: E712
+        )
+        .first()
+    )
+    if not prt:
+        raise HTTPException(status_code=400, detail="Invalid or already-used reset token")
+    if datetime.datetime.utcnow() > prt.expires_at:
+        prt.used = True
+        db.commit()
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    user = db.query(User).filter(User.id == prt.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+
+    _validate_password_strength(req.new_password, user.email)
+
+    user.hashed_password = hash_password(req.new_password)
+    prt.used = True
+    db.commit()
+    return {"message": "Password reset successfully"}
+
+
 @app.get("/api/auth/me")
 async def me(
     current: User = Depends(get_current_user),
@@ -585,9 +698,26 @@ def _safe_download_filename(filename: Optional[str]) -> str:
     return base or "document"
 
 
-# Global market data cache
-MARKET_DATA_CACHE: Dict[str, tuple[Dict[str, Any], float]] = {}
+# Global market data cache — bounded LRU with max 256 entries to prevent memory growth
+_MARKET_DATA_CACHE_MAX = 256
+MARKET_DATA_CACHE: "OrderedDict[str, tuple[Dict[str, Any], float]]" = OrderedDict()
 MARKET_DATA_CACHE_TTL = 24 * 3600  # 24 hours
+
+
+def _market_cache_get(key: str) -> Optional[tuple]:
+    """Return cached (data, timestamp) for key, or None. Moves hit to end (LRU)."""
+    entry = MARKET_DATA_CACHE.get(key)
+    if entry is not None:
+        MARKET_DATA_CACHE.move_to_end(key)
+    return entry
+
+
+def _market_cache_set(key: str, value: tuple) -> None:
+    """Insert/update cache entry and evict oldest when over capacity."""
+    MARKET_DATA_CACHE[key] = value
+    MARKET_DATA_CACHE.move_to_end(key)
+    while len(MARKET_DATA_CACHE) > _MARKET_DATA_CACHE_MAX:
+        MARKET_DATA_CACHE.popitem(last=False)
 MARKET_DATA_TIMEOUT_SECONDS = float(os.environ.get("MARKET_DATA_TIMEOUT_SECONDS", "5.0"))
 
 DEFAULT_FALLBACK_DATA = {
@@ -667,7 +797,7 @@ _last_seen_test = None
 
 
 def check_and_clear_cache_for_testing():
-    global _last_seen_test, MARKET_DATA_CACHE
+    global _last_seen_test
     current_test = os.environ.get("PYTEST_CURRENT_TEST")
     if current_test and current_test != _last_seen_test:
         MARKET_DATA_CACHE.clear()
@@ -675,14 +805,14 @@ def check_and_clear_cache_for_testing():
 
 
 async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
-    global MARKET_DATA_CACHE
     check_and_clear_cache_for_testing()
 
     city_key = city.strip().lower()
     now = time.time()
 
-    if city_key in MARKET_DATA_CACHE:
-        cached_data, timestamp = MARKET_DATA_CACHE[city_key]
+    cached = _market_cache_get(city_key)
+    if cached is not None:
+        cached_data, timestamp = cached
         if now - timestamp < MARKET_DATA_CACHE_TTL:
             return cached_data
 
@@ -699,8 +829,8 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
                 "description": "Missing RAPIDAPI_KEY configuration. Serving fallback data.",
                 "time": "Just now",
             })
-        fallback_res = MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
-        return fallback_res
+        cached_stale = _market_cache_get(city_key)
+        return cached_stale[0] if cached_stale else DEFAULT_FALLBACK_DATA
 
     url = f"{base_url}/market-data"
     headers = {
@@ -717,7 +847,7 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
             if response.status_code == 200:
                 raw_data = response.json()
                 sanitized = sanitize_market_data(raw_data)
-                MARKET_DATA_CACHE[city_key] = (sanitized, now)
+                _market_cache_set(city_key, (sanitized, now))
                 return sanitized
             elif response.status_code == 429:
                 if not any("rate limit" in a.get("description", "").lower() for a in alerts):
@@ -728,16 +858,20 @@ async def fetch_zillow_market_data(city: str, alerts: list) -> Dict[str, Any]:
                         "description": "Zillow API rate limit hit. Serving cached/fallback data.",
                         "time": "Just now",
                     })
-                return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
+                cached_stale = _market_cache_get(city_key)
+                return cached_stale[0] if cached_stale else DEFAULT_FALLBACK_DATA
             else:
                 print(f"Zillow API error: {response.status_code} - {response.text}")
-                return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
+                cached_stale = _market_cache_get(city_key)
+                return cached_stale[0] if cached_stale else DEFAULT_FALLBACK_DATA
         except (httpx.TimeoutException, asyncio.TimeoutError) as e:
             print(f"Zillow fetch timeout: {e}")
-            return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
+            cached_stale = _market_cache_get(city_key)
+            return cached_stale[0] if cached_stale else DEFAULT_FALLBACK_DATA
         except Exception as e:
             print(f"Zillow fetch exception: {e}")
-            return MARKET_DATA_CACHE[city_key][0] if city_key in MARKET_DATA_CACHE else DEFAULT_FALLBACK_DATA
+            cached_stale = _market_cache_get(city_key)
+            return cached_stale[0] if cached_stale else DEFAULT_FALLBACK_DATA
 
 
 # ---------------------------------------------------------------------------
@@ -2813,3 +2947,65 @@ async def create_billing_portal(current_user: User = Depends(get_current_user)):
         logger.exception("Stripe customer portal session creation failed")
         raise HTTPException(status_code=502, detail="Could not create customer portal session")
     return {"url": url}
+
+
+# ---------------------------------------------------------------------------
+# Stripe Webhook (canonical path, excluded from JWT auth and rate limiting)
+# ---------------------------------------------------------------------------
+
+def _handle_stripe_webhook_event(event: dict, db: Session) -> None:
+    """Apply side-effects for supported Stripe event types."""
+    event_type = event.get("type", "")
+    data_obj = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        client_reference_id = data_obj.get("client_reference_id")
+        if client_reference_id:
+            try:
+                user_id = int(client_reference_id)
+            except (ValueError, TypeError):
+                logger.warning("stripe webhook: non-integer client_reference_id=%s", client_reference_id)
+                return
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                metadata = data_obj.get("metadata") or {}
+                customer_id = data_obj.get("customer")
+                if customer_id:
+                    user.stripe_customer_id = str(customer_id)
+                user.subscription_status = "active"
+                user.subscription_tier = normalize_tier(metadata.get("tier"))
+                db.commit()
+                logger.info("stripe webhook: activated subscription for user_id=%s tier=%s", user_id, user.subscription_tier)
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = data_obj.get("customer")
+        if customer_id:
+            user = db.query(User).filter(User.stripe_customer_id == str(customer_id)).first()
+            if user:
+                user.subscription_status = "canceled"
+                db.commit()
+                logger.info("stripe webhook: canceled subscription for stripe_customer=%s", customer_id)
+
+
+@app.post("/api/webhooks/stripe")
+async def stripe_webhook_canonical(request: Request, db: Session = Depends(get_db)):
+    """Stripe webhook receiver at the canonical /api/webhooks/stripe path.
+
+    Verifies the Stripe-Signature header before processing. No JWT auth required.
+    Handles:
+      - checkout.session.completed  -> activate subscription
+      - customer.subscription.deleted -> cancel subscription
+    """
+    from billing import handle_webhook_event
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    try:
+        event = handle_webhook_event(payload, sig_header)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Webhook verification failed: {exc}")
+
+    _handle_stripe_webhook_event(event, db)
+    return {"status": "ok"}
