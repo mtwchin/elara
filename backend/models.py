@@ -154,6 +154,16 @@ class Mortgage(Base):
     property = relationship("Property", back_populates="mortgage")
 
 
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+
+
 class Document(Base):
     """Attachment for a transaction or a property. At least one FK must be set."""
     __tablename__ = "documents"
