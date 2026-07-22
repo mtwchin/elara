@@ -10,9 +10,34 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: elara
+          POSTGRES_PASSWORD: elara_ci
+          POSTGRES_DB: elara_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       RE_PORTFOLIO_JWT_SECRET: test-secret-for-ci-with-enough-entropy-0123456789abcdef
-      DATABASE_URL: sqlite:////tmp/elara_ci.db
+      DATABASE_URL: postgresql://elara:elara_ci@localhost:5432/elara_test
+      REDIS_URL: redis://localhost:6379/0
+      APP_ENV: test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
