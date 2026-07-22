@@ -254,98 +254,115 @@ const Tenants: React.FC = () => {
         </div>
       </div>
 
-      {search.length > 0 && (
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-          Showing {filteredTenants.length} of {tenants.length}
-        </p>
-      )}
+      {tenants.length === 0 && search.length === 0 ? (
+        <div className="glass-panel-static" style={{ display: 'flex', justifyContent: 'center', padding: '3rem 2rem' }}>
+          <div style={{ textAlign: 'center', maxWidth: '400px' }}>
+            <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ color: 'var(--brand-primary)', fontSize: '3rem' }}>
+                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>No tenants yet</h3>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Add your first tenant to manage leases and renewals</p>
+            <button className="btn btn-primary" onClick={openAddTenant}>Add Tenant</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {search.length > 0 && (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+              Showing {filteredTenants.length} of {tenants.length}
+            </p>
+          )}
 
-      <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Contact</th>
-              <th>Property</th>
-              <th>Lease Period</th>
-              <th>Rent</th>
-              <th>Intent</th>
-              <th>Screening</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredTenants.map((tenant) => {
-              const showRenewalCta =
-                isWithin90Days(tenant.leaseEnd) && tenant.intent !== 'Vacate';
-              return (
-                <tr key={tenant.id}>
-                  <td style={{ fontWeight: 500 }}>{tenant.name}</td>
-                  <td>
-                    <div>{tenant.email}</div>
-                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{tenant.phone}</div>
-                  </td>
-                  <td>{tenant.propertyAssigned}</td>
-                  <td>
-                    {tenant.leaseStart} {tenant.leaseStart && tenant.leaseEnd ? '→' : ''} {tenant.leaseEnd}
-                  </td>
-                  <td>
-                    {tenant.rentAmount != null
-                      ? `$${tenant.rentAmount.toLocaleString()}`
-                      : '—'}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      {intentBadge(tenant.intent)}
-                      {showRenewalCta && (
-                        <button
-                          className="btn btn-primary"
-                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', whiteSpace: 'nowrap' }}
-                          disabled={renewalLoading === tenant.id}
-                          onClick={() => handleDraftRenewal(tenant)}
-                        >
-                          {renewalLoading === tenant.id ? 'Drafting...' : 'Draft Renewal'}
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button
-                        className="btn"
-                        style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
-                        onClick={() => openEditTenant(tenant)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="btn"
-                        style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
-                        onClick={() => handleDeleteTenant(tenant.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+          <div className="glass-panel-static page-content" style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Contact</th>
+                  <th>Property</th>
+                  <th>Lease Period</th>
+                  <th>Rent</th>
+                  <th>Intent</th>
+                  <th>Screening</th>
+                  <th>Actions</th>
                 </tr>
-              );
-            })}
-            {filteredTenants.length === 0 && (
-              <tr>
-                <td colSpan={7}>
-                  <div className="empty-state">
-                    <div className="empty-state-icon">
-                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                    </div>
-                    <h3>{search.length > 0 ? 'No tenants match your search' : 'No tenants yet'}</h3>
-                    <p>{search.length > 0 ? 'Try a different search term.' : 'Add tenants and assign them to your properties.'}</p>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {filteredTenants.map((tenant) => {
+                  const showRenewalCta =
+                    isWithin90Days(tenant.leaseEnd) && tenant.intent !== 'Vacate';
+                  return (
+                    <tr key={tenant.id}>
+                      <td style={{ fontWeight: 500 }}>{tenant.name}</td>
+                      <td>
+                        <div>{tenant.email}</div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>{tenant.phone}</div>
+                      </td>
+                      <td>{tenant.propertyAssigned}</td>
+                      <td>
+                        {tenant.leaseStart} {tenant.leaseStart && tenant.leaseEnd ? '→' : ''} {tenant.leaseEnd}
+                      </td>
+                      <td>
+                        {tenant.rentAmount != null
+                          ? `$${tenant.rentAmount.toLocaleString()}`
+                          : '—'}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          {intentBadge(tenant.intent)}
+                          {showRenewalCta && (
+                            <button
+                              className="btn btn-primary"
+                              style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', whiteSpace: 'nowrap' }}
+                              disabled={renewalLoading === tenant.id}
+                              onClick={() => handleDraftRenewal(tenant)}
+                            >
+                              {renewalLoading === tenant.id ? 'Drafting...' : 'Draft Renewal'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            className="btn"
+                            style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
+                            onClick={() => openEditTenant(tenant)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="btn"
+                            style={{ padding: '0.25rem 0.75rem', fontSize: '0.8rem', color: 'var(--danger)' }}
+                            onClick={() => handleDeleteTenant(tenant.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredTenants.length === 0 && (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="empty-state">
+                        <div className="empty-state-icon">
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        </div>
+                        <h3>No tenants match your search</h3>
+                        <p>Try a different search term.</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       {/* Tenant add/edit modal */}
       {showTenantModal && (
