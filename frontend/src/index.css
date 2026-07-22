@@ -790,6 +790,328 @@ select.form-input {
    B6: LANDING PAGE
    ============================================================ */
 
+.marketing-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.marketing-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1rem 3rem;
+  background: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.marketing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  font-family: 'EB Garamond', serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.marketing-brand img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.marketing-nav-links {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  padding: 0.25rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+}
+
+.marketing-nav-links button {
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.marketing-nav-links button:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.marketing-nav-actions,
+.marketing-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.marketing-hero {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 5rem 2rem 3rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.82fr);
+  gap: 3rem;
+  align-items: center;
+}
+
+.marketing-hero-copy h1 {
+  font-size: 5rem;
+  margin-bottom: 1rem;
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.marketing-hero-subtitle {
+  max-width: 640px;
+  font-size: 1.18rem;
+  line-height: 1.72;
+  margin-bottom: 2rem;
+}
+
+.marketing-note {
+  margin-top: 1rem;
+  font-size: 0.84rem;
+}
+
+.marketing-product-preview {
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  box-shadow: var(--glass-inner-glow), 0 24px 70px rgba(49, 46, 129, 0.16);
+  padding: 1.2rem;
+  transform: rotateX(3deg) rotateY(-4deg);
+}
+
+.preview-window-bar {
+  display: flex;
+  gap: 0.4rem;
+  padding-bottom: 1rem;
+}
+
+.preview-window-bar span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--glass-border);
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.preview-header h2 {
+  margin: 0.3rem 0 0;
+  font-family: 'EB Garamond', serif;
+  font-size: 2rem;
+}
+
+.preview-status {
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--brand-primary);
+  background: var(--brand-primary-soft);
+}
+
+.preview-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.preview-metrics div {
+  min-width: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 1rem;
+  background: var(--bg-primary);
+}
+
+.preview-metrics p {
+  font-size: 0.78rem;
+  margin-bottom: 0.4rem;
+}
+
+.preview-metrics strong {
+  display: block;
+  font-family: 'EB Garamond', serif;
+  font-size: 1.7rem;
+  color: var(--text-primary);
+}
+
+.preview-metrics span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.preview-insight {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 1rem;
+  border-radius: 14px;
+  background: var(--brand-accent-soft);
+  color: var(--brand-accent);
+}
+
+.preview-insight p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.marketing-band {
+  width: 100%;
+}
+
+.pricing-section {
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 5rem 2rem;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.25rem;
+  align-items: stretch;
+}
+
+.pricing-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 8px 24px rgba(49, 46, 129, 0.06);
+}
+
+.pricing-card-featured {
+  border-color: color-mix(in srgb, var(--brand-primary) 45%, var(--glass-border));
+  box-shadow: 0 18px 44px rgba(79, 70, 229, 0.16);
+}
+
+.pricing-badge {
+  align-self: flex-start;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--brand-primary);
+}
+
+.pricing-card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.pricing-price {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.25rem;
+  color: var(--text-primary);
+}
+
+.pricing-price span {
+  font-family: 'EB Garamond', serif;
+  font-size: 3rem;
+  line-height: 0.95;
+}
+
+.pricing-price small {
+  color: var(--text-secondary);
+  margin-bottom: 0.25rem;
+}
+
+.pricing-card ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0.25rem 0 0.5rem;
+  flex: 1;
+}
+
+.pricing-card li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.pricing-card li svg {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.pricing-footnote {
+  margin: 1.2rem auto 0;
+  text-align: center;
+  max-width: 720px;
+  font-size: 0.88rem;
+}
+
 /* Social proof metrics bar */
 .social-proof-bar {
   display: flex;
@@ -878,6 +1200,8 @@ select.form-input {
   justify-content: center;
   font-size: 1.5rem;
   margin-bottom: 1.25rem;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
 }
 
 .feature-card h3 {
@@ -962,6 +1286,15 @@ header {
 @media (max-width: 900px) {
   .features-grid-2col {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .marketing-hero,
+  .pricing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .marketing-product-preview {
+    transform: none;
   }
 }
 
@@ -1100,6 +1433,100 @@ header {
   border: 1px solid var(--glass-border);
   border-radius: 24px;
   box-shadow: var(--glass-shadow);
+}
+
+.home-cta-section p {
+  font-size: 1rem;
+  max-width: 620px;
+  margin: 0 auto 1.75rem;
+}
+
+.marketing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 2rem 3rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.marketing-footer div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'EB Garamond', serif;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.marketing-footer img {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.marketing-footer p {
+  margin: 0;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+/* ============================================================
+   BILLING
+   ============================================================ */
+
+.billing-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.billing-status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.billing-status-card h2 {
+  margin: 0.25rem 0;
+  font-size: 1.25rem;
+}
+
+.billing-status-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.billing-pricing-section {
+  padding: 2rem 0 0;
+}
+
+.billing-readiness {
+  margin-top: 2rem;
+}
+
+.billing-readiness > div {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.75rem;
+  color: var(--brand-primary);
+}
+
+.billing-readiness h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 /* ============================================================
@@ -1316,6 +1743,65 @@ header {
    ============================================================ */
 
 @media (max-width: 768px) {
+  .marketing-nav {
+    padding: 0.75rem 1rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .marketing-nav-links {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .marketing-nav-actions {
+    gap: 0.4rem;
+  }
+
+  .marketing-nav-actions .btn {
+    padding: 0.48rem 0.75rem;
+  }
+
+  .marketing-hero {
+    grid-template-columns: 1fr;
+    padding: 3rem 1rem 2rem;
+    gap: 2rem;
+  }
+
+  .marketing-hero-copy h1 {
+    font-size: 3.4rem;
+  }
+
+  .marketing-hero-subtitle {
+    font-size: 1rem;
+  }
+
+  .marketing-product-preview {
+    transform: none;
+  }
+
+  .preview-metrics,
+  .pricing-grid,
+  .billing-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-section {
+    padding: 3rem 1rem;
+  }
+
+  .marketing-footer {
+    padding: 1.5rem 1rem;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .marketing-footer p {
+    text-align: left;
+  }
+
   .app-container {
     padding: 1.5rem 1rem;
   }

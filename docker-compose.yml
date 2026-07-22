@@ -2,9 +2,9 @@ services:
   db:
     image: postgres:15
     environment:
-      POSTGRES_USER: elara
-      POSTGRES_PASSWORD: elara_password
-      POSTGRES_DB: elara_db
+      POSTGRES_USER: ${POSTGRES_USER:-elara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-elara_password}
+      POSTGRES_DB: ${POSTGRES_DB:-elara_db}
     ports:
       - "5432:5432"
     volumes:
@@ -25,16 +25,34 @@ services:
       - RE_PORTFOLIO_JWT_SECRET=${RE_PORTFOLIO_JWT_SECRET}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - RAPIDAPI_KEY=${RAPIDAPI_KEY:-}
-      - DATABASE_URL=postgresql://elara:elara_password@db/elara_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-elara}:${POSTGRES_PASSWORD:-elara_password}@db/${POSTGRES_DB:-elara_db}
       - REDIS_URL=redis://redis:6379/0
+      - UPLOAD_DIR=/app/uploads
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRICE_ID_STARTER=${STRIPE_PRICE_ID_STARTER:-}
+      - STRIPE_PRICE_ID_PORTFOLIO=${STRIPE_PRICE_ID_PORTFOLIO:-}
+      - STRIPE_PRICE_ID_OPERATOR=${STRIPE_PRICE_ID_OPERATOR:-}
       - SENTRY_DSN=${SENTRY_DSN:-}
+      - APP_ENV=${APP_ENV:-development}
+      - PUBLIC_APP_URL=${PUBLIC_APP_URL:-http://localhost}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:5173,http://127.0.0.1:5173}
+      - DEBUG_REQUEST_LOGS=${DEBUG_REQUEST_LOGS:-false}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
+      - RATE_LIMIT_AUTH_MAX=${RATE_LIMIT_AUTH_MAX:-20}
+      - RATE_LIMIT_AI_MAX=${RATE_LIMIT_AI_MAX:-60}
+      - RATE_LIMIT_UPLOAD_MAX=${RATE_LIMIT_UPLOAD_MAX:-60}
+      - RATE_LIMIT_MARKET_MAX=${RATE_LIMIT_MARKET_MAX:-180}
+      - RATE_LIMIT_DEFAULT_MAX=${RATE_LIMIT_DEFAULT_MAX:-600}
+      - MIN_PASSWORD_LENGTH=${MIN_PASSWORD_LENGTH:-10}
+      - MARKET_DATA_TIMEOUT_SECONDS=${MARKET_DATA_TIMEOUT_SECONDS:-5.0}
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
+      - backend_uploads:/app/uploads
     restart: unless-stopped
 
   worker:
@@ -44,13 +62,16 @@ services:
       - RE_PORTFOLIO_JWT_SECRET=${RE_PORTFOLIO_JWT_SECRET}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - RAPIDAPI_KEY=${RAPIDAPI_KEY:-}
-      - DATABASE_URL=postgresql://elara:elara_password@db/elara_db
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-elara}:${POSTGRES_PASSWORD:-elara_password}@db/${POSTGRES_DB:-elara_db}
       - REDIS_URL=redis://redis:6379/0
+      - APP_ENV=${APP_ENV:-development}
+      - UPLOAD_DIR=/app/uploads
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
+      - backend_uploads:/app/uploads
     restart: unless-stopped
 
   frontend:
@@ -66,3 +87,4 @@ services:
 
 volumes:
   postgres_data:
+  backend_uploads:

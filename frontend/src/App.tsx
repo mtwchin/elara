@@ -9,6 +9,7 @@ import Calendar from './components/Calendar';
 import Maintenance from './components/Maintenance';
 import TenantPortal from './components/TenantPortal';
 import Assistant from './components/Assistant';
+import Billing from './components/Billing';
 import Login from './components/Login';
 import Home from './components/Home';
 import { clearSession, getEmail, getToken, getAccountType } from './auth';
@@ -16,7 +17,7 @@ import { getStoredTheme, applyTheme } from './theme';
 import type { Theme } from './theme';
 import elaraLogo from './assets/elara.jpg';
 
-type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant';
+type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant' | 'billing';
 
 function App() {
   const [accountType, setAccountType] = useState<string | null>(getAccountType());
@@ -82,6 +83,7 @@ function App() {
     { view: 'tools', label: 'Tools' },
     { view: 'calendar', label: 'Calendar' },
     { view: 'assistant', label: 'AI Assistant' },
+    { view: 'billing', label: 'Billing' },
   ];
 
   const tenantNavItems: { view: View; label: string }[] = [
@@ -160,6 +162,7 @@ function App() {
         {currentView === 'maintenance' && <Maintenance />}
         {currentView === 'tenant-portal' && <TenantPortal />}
         {currentView === 'assistant' && <Assistant />}
+        {currentView === 'billing' && <Billing />}
       </main>
     </div>
   );

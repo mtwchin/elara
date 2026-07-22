@@ -1,5 +1,18 @@
 import React from 'react';
-import { Sun, Moon } from 'lucide-react';
+import {
+  ArrowRight,
+  BarChart3,
+  Building2,
+  Check,
+  ClipboardList,
+  FileText,
+  HomeIcon,
+  Moon,
+  ShieldCheck,
+  Sparkles,
+  Sun,
+  Wrench,
+} from 'lucide-react';
 import type { Theme } from '../theme';
 import elaraLogo from '../assets/elara.jpg';
 
@@ -9,337 +22,284 @@ interface Props {
   onToggleTheme: () => void;
 }
 
-const testimonials = [
+const customerSegments = [
   {
-    quote:
-      'Elara cut the time I spend on monthly reporting from two days down to about 20 minutes. The cap rate and cash-on-cash views are exactly what I need to stay on top of 38 units.',
-    name: 'Marcus T.',
-    title: 'Multifamily investor, 38 units — Austin, TX',
-    initials: 'MT',
+    icon: <HomeIcon size={20} />,
+    title: 'Small rental owners',
+    body: 'For owners with 3-25 doors who need rent, lease, maintenance, document, and cash-flow visibility without spreadsheet sprawl.',
   },
   {
-    quote:
-      'I evaluated three platforms before choosing Elara. The deal analyzer alone paid for itself on the first acquisition. I passed on a property that looked great on paper but broke even at 94% occupancy.',
-    name: 'Priya S.',
-    title: 'RE syndicator, 12 properties — Phoenix, AZ',
-    initials: 'PS',
+    icon: <Building2 size={20} />,
+    title: 'Growing operators',
+    body: 'For owner-operators and small teams managing 25-100 units who need portfolio health, renewal workflows, and cleaner reporting.',
   },
   {
-    quote:
-      "We manage properties for a family office with 60+ doors. Elara's Schedule E export saves our accountant hours every quarter. The AI alerts caught a lease expiration we would have missed entirely.",
-    name: 'Jonathan R.',
-    title: 'Asset manager, family office — Miami, FL',
-    initials: 'JR',
+    icon: <ClipboardList size={20} />,
+    title: 'Property managers',
+    body: 'For service businesses that want a focused operating layer before graduating into heavier enterprise platforms.',
   },
 ];
 
-const features = [
+const featureGroups = [
   {
-    color: 'rgba(59, 130, 246, 0.1)',
-    colorVar: 'var(--accent-blue)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-      </svg>
-    ),
-    title: 'AI-Powered Analytics',
-    body: 'Machine learning models surface rent-raise opportunities, flag lease-expiration risks, and benchmark your portfolio against live market comps.',
+    icon: <BarChart3 size={21} />,
+    title: 'Portfolio command center',
+    body: 'Track occupancy, revenue, expenses, property value, lease timing, and maintenance pressure from one operating dashboard.',
   },
   {
-    color: 'rgba(34, 197, 94, 0.1)',
-    colorVar: 'var(--success)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-      </svg>
-    ),
-    title: 'Real-Time Tracking',
-    body: 'Monitor occupancy, cash flows, and maintenance requests across your entire portfolio from a single dashboard with live refresh.',
+    icon: <Sparkles size={21} />,
+    title: 'AI-assisted workflows',
+    body: 'Generate renewal drafts, portfolio health checks, document extraction summaries, and grounded assistant responses from live account data.',
   },
   {
-    color: 'rgba(147, 51, 234, 0.1)',
-    colorVar: 'var(--accent-purple)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-      </svg>
-    ),
-    title: 'Bank-Grade Security',
-    body: 'End-to-end encryption, SOC 2 Type II compliance, and role-based access control protect your most sensitive financial data.',
+    icon: <FileText size={21} />,
+    title: 'Documents and reporting',
+    body: 'Attach receipts and property files, export transactions, prepare accountant-friendly views, and keep records tied to the right asset.',
   },
   {
-    color: 'rgba(245, 158, 11, 0.1)',
-    colorVar: 'var(--warning)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-      </svg>
-    ),
-    title: 'Financial Calculators',
-    body: 'Deal analyzer, mortgage amortization, pro forma projections, depreciation schedules, and refinance analyzer — all in one toolkit.',
-  },
-  {
-    color: 'rgba(239, 68, 68, 0.1)',
-    colorVar: 'var(--danger)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-      </svg>
-    ),
-    title: 'Tax-Ready Exports',
-    body: 'One-click Schedule E and rent roll exports formatted for your accountant. Depreciation tracking built for 27.5-year residential schedules.',
-  },
-  {
-    color: 'rgba(59, 130, 246, 0.08)',
-    colorVar: 'var(--accent-blue)',
-    icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-      </svg>
-    ),
-    title: 'Tenant Management',
-    body: 'Track leases, renewal intent, and rent payments across all tenants. Automated alerts surface expiring leases 90 days out.',
+    icon: <Wrench size={21} />,
+    title: 'Maintenance visibility',
+    body: 'Centralize requests, priorities, status, tenant context, and recurring-property signals before issues become expensive surprises.',
   },
 ];
 
-const trustBadges = [
-  { label: 'SOC 2 Type II' },
-  { label: '256-bit AES Encryption' },
-  { label: 'GDPR Compliant' },
-  { label: 'Uptime SLA 99.9%' },
-  { label: 'Daily Backups' },
+const pricingPlans = [
+  {
+    name: 'Starter',
+    price: '$39',
+    cadence: '/mo',
+    description: 'For owners getting out of spreadsheets.',
+    details: ['Up to 5 units', 'Portfolio dashboard', 'Tenant and lease tracking', 'Transaction exports'],
+    cta: 'Start trial',
+  },
+  {
+    name: 'Portfolio',
+    price: '$89',
+    cadence: '/mo',
+    description: 'For active owners with a growing rental portfolio.',
+    details: ['Up to 25 units', 'AI health checks', 'Maintenance workflows', 'Document extraction'],
+    cta: 'Choose Portfolio',
+    featured: true,
+  },
+  {
+    name: 'Operator',
+    price: '$199',
+    cadence: '/mo',
+    description: 'For small teams and higher-volume operators.',
+    details: ['Up to 100 units', 'Team-ready workflows', 'Priority onboarding', 'Advanced portfolio reporting'],
+    cta: 'Choose Operator',
+  },
+];
+
+const launchProof = [
+  { value: '14 days', label: 'Free beta trial' },
+  { value: '3-100', label: 'Ideal unit range' },
+  { value: 'CSV', label: 'Export-ready data' },
+  { value: 'AI', label: 'Grounded in your records' },
+];
+
+const trustItems = [
+  'Local JWT authentication',
+  'Per-account portfolio isolation',
+  'Configurable CORS origins',
+  'Stripe-ready billing path',
+  'AI disclaimers required before launch',
 ];
 
 const Home: React.FC<Props> = ({ onLoginClick, theme, onToggleTheme }) => {
+  const scrollToPricing = () => {
+    document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Navigation */}
-      <nav style={{
-        padding: '1.5rem 3rem',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        background: 'rgba(249, 250, 251, 0.8)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        borderBottom: '1px solid rgba(0,0,0,0.05)'
-      }}>
-        <button
-          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-          aria-label="Back to top"
-        >
-          <img src={elaraLogo} alt="Elara" style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover' }} />
-          <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: "'EB Garamond', serif", fontWeight: 600 }}>Elara</h2>
+    <div className="marketing-shell">
+      <nav className="marketing-nav">
+        <button className="marketing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Back to top">
+          <img src={elaraLogo} alt="Elara" />
+          <span>Elara</span>
         </button>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+
+        <div className="marketing-nav-links" aria-label="Primary">
+          <button onClick={() => document.getElementById('fit')?.scrollIntoView({ behavior: 'smooth' })}>Who it is for</button>
+          <button onClick={() => document.getElementById('product')?.scrollIntoView({ behavior: 'smooth' })}>Product</button>
+          <button onClick={scrollToPricing}>Pricing</button>
+        </div>
+
+        <div className="marketing-nav-actions">
           <button
             onClick={onToggleTheme}
             title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            style={{
-              background: 'var(--bg-tertiary)',
-              border: '1px solid var(--glass-border)',
-              borderRadius: '8px',
-              width: '32px',
-              height: '32px',
-              cursor: 'pointer',
-              color: 'var(--text-secondary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
+            className="icon-btn"
           >
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </button>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500, fontFamily: 'Inter, sans-serif', fontSize: '0.9rem', color: 'var(--text-secondary)' }} onClick={onLoginClick}>Sign In</button>
-          <button className="btn btn-primary" onClick={onLoginClick}>Get Started</button>
+          <button className="btn" onClick={onLoginClick}>Sign in</button>
+          <button className="btn btn-primary" onClick={onLoginClick}>Start beta</button>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }} className="fade-in">
-        <div style={{ textAlign: 'center', maxWidth: '820px', padding: '0 2rem', paddingTop: '6rem' }}>
-          <div className="home-eyebrow">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-            Now in private beta — 2,400 investors on the waitlist
-          </div>
-          <h1 className="text-gradient" style={{ fontSize: '4.5rem', marginBottom: '1.5rem', lineHeight: 1.05 }}>
-            Manage Real Estate<br/>with Unfair Advantage.
-          </h1>
-          <p style={{ fontSize: '1.2rem', color: 'var(--text-secondary)', maxWidth: '600px', margin: '0 auto', marginBottom: '2.5rem', lineHeight: 1.7 }}>
-            AI-driven insights, live market tracking, professional financial tools, and automated portfolio management — all in one incredibly fast platform.
-          </p>
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button className="btn btn-accent" style={{ padding: '0.75rem 2rem', fontSize: '1.05rem' }} onClick={onLoginClick}>
-              Create Workspace
-            </button>
-            <button className="btn" style={{ padding: '0.75rem 2rem', fontSize: '1.05rem' }} onClick={onLoginClick}>
-              View Live Demo
-            </button>
-          </div>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '1rem' }}>
-            Free 14-day trial. No credit card required.
-          </p>
-        </div>
-
-        {/* Social Proof Metrics Bar */}
-        <div className="social-proof-bar" style={{ width: '100%', maxWidth: '1000px', marginTop: '4rem' }}>
-          <div className="social-proof-item scroll-reveal">
-            <div className="social-proof-value">$4.1B+</div>
-            <div className="social-proof-label">Assets Under Management</div>
-          </div>
-          <div className="social-proof-item scroll-reveal">
-            <div className="social-proof-value">18,400+</div>
-            <div className="social-proof-label">Properties Tracked</div>
-          </div>
-          <div className="social-proof-item scroll-reveal">
-            <div className="social-proof-value">99.9%</div>
-            <div className="social-proof-label">Platform Uptime</div>
-          </div>
-          <div className="social-proof-item scroll-reveal">
-            <div className="social-proof-value">4.9 / 5</div>
-            <div className="social-proof-label">Investor Rating</div>
-          </div>
-          <div className="social-proof-item scroll-reveal">
-            <div className="social-proof-value">62 hrs</div>
-            <div className="social-proof-label">Avg. Time Saved / Year</div>
-          </div>
-        </div>
-
-        {/* Feature Showcase — 6 cards */}
-        <div className="features-section">
-          <div className="features-section-header">
-            <h2>Everything you need to scale</h2>
-            <p style={{ maxWidth: '520px', margin: '0 auto', fontSize: '1.05rem' }}>
-              Purpose-built tools for professional real estate investors — from your first door to your hundredth.
+      <main>
+        <section className="marketing-hero">
+          <div className="marketing-hero-copy">
+            <div className="home-eyebrow">
+              <ShieldCheck size={14} />
+              Private beta for rental owners and small operators
+            </div>
+            <h1>Elara</h1>
+            <p className="marketing-hero-subtitle">
+              The AI-assisted operating dashboard for rental property owners who need cleaner records, faster decisions, and fewer things falling through the cracks.
             </p>
+            <div className="marketing-hero-actions">
+              <button className="btn btn-accent" onClick={onLoginClick}>
+                Start free trial
+                <ArrowRight size={16} />
+              </button>
+              <button className="btn" onClick={scrollToPricing}>See pricing</button>
+            </div>
+            <p className="marketing-note">No credit card required during beta. Paid plans begin after setup is confirmed.</p>
+          </div>
+
+          <div className="marketing-product-preview" aria-label="Elara product preview">
+            <div className="preview-window-bar">
+              <span />
+              <span />
+              <span />
+            </div>
+            <div className="preview-header">
+              <div>
+                <p className="metric-label">Portfolio health</p>
+                <h2>Rental Operations</h2>
+              </div>
+              <div className="preview-status">Beta</div>
+            </div>
+            <div className="preview-metrics">
+              <div>
+                <p>Monthly revenue</p>
+                <strong>$18,420</strong>
+                <span className="text-success">On track</span>
+              </div>
+              <div>
+                <p>Occupancy</p>
+                <strong>94%</strong>
+                <span>1 vacancy</span>
+              </div>
+              <div>
+                <p>Lease risk</p>
+                <strong>3</strong>
+                <span>Expiring soon</span>
+              </div>
+            </div>
+            <div className="preview-insight">
+              <Sparkles size={17} />
+              <p>One renewal is inside the 60-day window. Draft the letter and compare rent against market assumptions before contacting the tenant.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="social-proof-bar" aria-label="Launch focus">
+          {launchProof.map((item) => (
+            <div className="social-proof-item" key={item.label}>
+              <div className="social-proof-value">{item.value}</div>
+              <div className="social-proof-label">{item.label}</div>
+            </div>
+          ))}
+        </section>
+
+        <section id="fit" className="features-section">
+          <div className="features-section-header">
+            <h2>Built for the underserved middle of rental ownership</h2>
+            <p>Elara is intentionally aimed below enterprise platforms and above a single spreadsheet.</p>
+          </div>
+          <div className="features-grid">
+            {customerSegments.map((segment) => (
+              <article className="feature-card" key={segment.title}>
+                <div className="feature-card-icon">{segment.icon}</div>
+                <h3>{segment.title}</h3>
+                <p>{segment.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section id="product" className="features-section marketing-band">
+          <div className="features-section-header">
+            <h2>What early users can actually use today</h2>
+            <p>Real product surface first, heavier integrations second.</p>
           </div>
           <div className="features-grid features-grid-2col">
-            {features.map((f, i) => (
-              <div key={i} className="feature-card scroll-reveal">
-                <div className="feature-card-icon" style={{ background: f.color, color: f.colorVar }}>
-                  {f.icon}
-                </div>
-                <h3>{f.title}</h3>
-                <p>{f.body}</p>
-              </div>
+            {featureGroups.map((feature) => (
+              <article className="feature-card" key={feature.title}>
+                <div className="feature-card-icon">{feature.icon}</div>
+                <h3>{feature.title}</h3>
+                <p>{feature.body}</p>
+              </article>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* Demo UI Preview */}
-        <div style={{ width: '100%', maxWidth: '1100px', padding: '0 2rem', perspective: '1000px', marginBottom: '2rem' }}>
-          <div className="glass-panel" style={{
-            transform: 'rotateX(5deg) scale(0.95)',
-            boxShadow: '0 24px 64px rgba(0,0,0,0.1)',
-            padding: '2rem'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-              <h2 style={{ margin: 0, fontFamily: "'EB Garamond', serif" }}>Portfolio Overview</h2>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)' }}></div>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--warning)' }}></div>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success)' }}></div>
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.5rem' }}>
-              <div style={{ background: 'var(--bg-primary)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                <div className="metric-label">Total Value</div>
-                <div className="metric-value" style={{ fontSize: '1.75rem' }}>$14.2M</div>
-                <div className="metric-trend text-success">+2.4% vs last month</div>
-              </div>
-              <div style={{ background: 'var(--bg-primary)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                <div className="metric-label">Monthly Rev</div>
-                <div className="metric-value" style={{ fontSize: '1.75rem' }}>$124K</div>
-                <div className="metric-trend text-success">+1.2% vs last month</div>
-              </div>
-              <div style={{ background: 'var(--bg-primary)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                <div className="metric-label">Avg Cap Rate</div>
-                <div className="metric-value" style={{ fontSize: '1.75rem' }}>6.8%</div>
-                <div className="metric-trend text-success">+0.3% vs last year</div>
-              </div>
-              <div style={{ background: 'var(--bg-primary)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                <div className="metric-label">Occupancy</div>
-                <div className="metric-value" style={{ fontSize: '1.75rem' }}>97.2%</div>
-                <div className="metric-trend text-success">3 units leased this month</div>
-              </div>
-            </div>
+        <section id="pricing" className="pricing-section">
+          <div className="features-section-header">
+            <h2>Simple beta pricing</h2>
+            <p>Plans are designed around the number of units an owner or operator needs to manage.</p>
           </div>
-        </div>
-
-        {/* Testimonials */}
-        <div className="testimonials-section">
-          <div className="features-section-header" style={{ marginBottom: '3rem' }}>
-            <h2>Trusted by serious investors</h2>
-            <p style={{ maxWidth: '480px', margin: '0 auto' }}>
-              From single-family landlords to family offices — here's what real users say.
-            </p>
-          </div>
-          <div className="testimonials-grid">
-            {testimonials.map((t, i) => (
-              <div key={i} className="testimonial-card scroll-reveal">
-                <div className="testimonial-stars">
-                  {[1,2,3,4,5].map(s => (
-                    <svg key={s} width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                    </svg>
+          <div className="pricing-grid">
+            {pricingPlans.map((plan) => (
+              <article className={`pricing-card${plan.featured ? ' pricing-card-featured' : ''}`} key={plan.name}>
+                {plan.featured && <div className="pricing-badge">Best first plan</div>}
+                <h3>{plan.name}</h3>
+                <p>{plan.description}</p>
+                <div className="pricing-price">
+                  <span>{plan.price}</span>
+                  <small>{plan.cadence}</small>
+                </div>
+                <ul>
+                  {plan.details.map((detail) => (
+                    <li key={detail}>
+                      <Check size={15} />
+                      {detail}
+                    </li>
                   ))}
-                </div>
-                <blockquote className="testimonial-quote">"{t.quote}"</blockquote>
-                <div className="testimonial-author">
-                  <div className="testimonial-avatar">{t.initials}</div>
-                  <div>
-                    <div className="testimonial-name">{t.name}</div>
-                    <div className="testimonial-title">{t.title}</div>
-                  </div>
-                </div>
-              </div>
+                </ul>
+                <button className={`btn ${plan.featured ? 'btn-primary' : ''}`} onClick={onLoginClick}>{plan.cta}</button>
+              </article>
             ))}
           </div>
-        </div>
+          <p className="pricing-footnote">100+ units, hotel operations, short-term rental channel management, and custom data migration are handled as custom onboarding.</p>
+        </section>
 
-        {/* Trust Badges */}
-        <div className="trust-badges-row">
-          <p className="trust-badges-label">Security &amp; compliance</p>
+        <section className="trust-badges-row">
+          <p className="trust-badges-label">Launch readiness focus</p>
           <div className="trust-badges">
-            {trustBadges.map((b, i) => (
-              <div key={i} className="trust-badge">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-                {b.label}
+            {trustItems.map((item) => (
+              <div className="trust-badge" key={item}>
+                <Check size={13} />
+                {item}
               </div>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* CTA Section */}
-        <div className="home-cta-section">
-          <h2 style={{ fontFamily: "'EB Garamond', serif", fontSize: '2.5rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>
-            Ready to take control of your portfolio?
-          </h2>
-          <p style={{ fontSize: '1.05rem', maxWidth: '480px', margin: '0 auto 2rem' }}>
-            Join 2,400+ investors already on the platform. Set up takes under 5 minutes.
+        <section className="home-cta-section">
+          <h2>Get the first real portfolio into Elara</h2>
+          <p>
+            The next milestone is paid beta customers: onboard a real owner, import their data, prove weekly usefulness, then tighten the product around what they repeat.
           </p>
-          <button className="btn btn-primary" style={{ padding: '0.875rem 2.5rem', fontSize: '1.1rem' }} onClick={onLoginClick}>
-            Start Free Trial
-          </button>
-        </div>
+          <div className="marketing-hero-actions">
+            <button className="btn btn-primary" onClick={onLoginClick}>
+              Create workspace
+              <ArrowRight size={16} />
+            </button>
+            <a className="btn" href="mailto:hello@elara.app?subject=Elara%20beta%20demo">Request guided setup</a>
+          </div>
+        </section>
       </main>
 
-      <footer style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.875rem', borderTop: '1px solid var(--glass-border)' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-          <img src={elaraLogo} alt="Elara" style={{ width: '20px', height: '20px', borderRadius: '4px', objectFit: 'cover' }} />
-          <span style={{ fontFamily: "'EB Garamond', serif", fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>Elara</span>
+      <footer className="marketing-footer">
+        <div>
+          <img src={elaraLogo} alt="" />
+          <span>Elara</span>
         </div>
-        © 2026 Elara, Inc. All rights reserved.
+        <p>© 2026 Elara. Beta product for rental portfolio operations. AI outputs should be reviewed before use.</p>
       </footer>
     </div>
   );

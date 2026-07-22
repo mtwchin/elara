@@ -68,9 +68,14 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              minLength={6}
+              minLength={mode === 'register' ? 10 : 1}
               className="form-input"
             />
+            {mode === 'register' && (
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                Use at least 10 characters with uppercase, lowercase, and a number.
+              </span>
+            )}
           </div>
 
           {error && <div style={{ color: 'var(--danger)', fontSize: '0.9rem' }}>{error}</div>}
@@ -84,14 +89,14 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
           {mode === 'login' ? (
             <>
               Need an account?{' '}
-              <button onClick={() => { setMode('register'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
+              <button onClick={() => { setMode('register'); setPassword('DemoPass1234'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
                 Register
               </button>
             </>
           ) : (
             <>
               Already registered?{' '}
-              <button onClick={() => { setMode('login'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
+              <button onClick={() => { setMode('login'); setPassword('demo1234'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--brand-primary)', cursor: 'pointer', padding: 0 }}>
                 Sign in
               </button>
             </>

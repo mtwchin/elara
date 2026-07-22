@@ -16,7 +16,13 @@ backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../bac
 sys.path.insert(0, backend_dir)
 
 # Override environment variables for the test suite
+os.environ.setdefault(
+    "RE_PORTFOLIO_JWT_SECRET",
+    "test-secret-for-e2e-suite-with-enough-entropy-0123456789abcdef",
+)
 os.environ["CLERK_JWKS_URL"] = "http://localhost:8001/.well-known/jwks.json"
+os.environ["CLERK_ISSUER"] = "https://clerk.mock-issuer.com"
+os.environ["CLERK_AUDIENCE"] = "mock-client-app"
 os.environ["ZILLOW_API_BASE_URL"] = "http://localhost:8002"
 os.environ["RAPIDAPI_KEY"] = "test-key"
 os.environ["RAPIDAPI_HOST"] = "zillow-com1.p.rapidapi.com"
