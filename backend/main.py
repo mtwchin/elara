@@ -507,16 +507,32 @@ def _issue_password_reset_token(user: User, db: Session) -> str:
 
 @app.post("/api/auth/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
-    """Generate a password reset token and log the reset link.
+    """Generate a password reset token and send it via email.
 
     Always returns the same response to avoid revealing whether an email exists.
     """
+    from email_service import send_email
+
     email = _normalize_email(str(req.email))
     user = db.query(User).filter(User.email == email).first()
     if user:
         raw_token = _issue_password_reset_token(user, db)
         reset_link = f"{PUBLIC_APP_URL.rstrip('/')}/reset-password?token={raw_token}"
         logger.info("Password reset link for user_id=%s: %s", user.id, reset_link)
+        try:
+            send_email(
+                to=user.email,
+                subject="Reset your Elara password",
+                body=(
+                    f"<p>Hi,</p>"
+                    f"<p>Click the link below to reset your Elara password. "
+                    f"This link expires in 1 hour.</p>"
+                    f'<p><a href="{reset_link}">{reset_link}</a></p>'
+                    f"<p>If you did not request a password reset, you can safely ignore this email.</p>"
+                ),
+            )
+        except Exception:
+            logger.exception("Failed to send password reset email to user_id=%s", user.id)
     return {"message": "If that email exists, a reset link has been sent"}
 
 
