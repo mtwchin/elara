@@ -11,6 +11,8 @@ import TenantPortal from './components/TenantPortal';
 import Assistant from './components/Assistant';
 import Billing from './components/Billing';
 import Login from './components/Login';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 import Home from './components/Home';
 import { clearSession, getEmail, getToken, getAccountType } from './auth';
 import { getStoredTheme, applyTheme } from './theme';
@@ -25,6 +27,8 @@ function App() {
   const [authed, setAuthed] = useState<boolean>(!!getToken());
   const [email, setEmail] = useState<string | null>(getEmail());
   const [showLogin, setShowLogin] = useState<boolean>(false);
+  const [showForgot, setShowForgot] = useState<boolean>(false);
+  const [showReset, setShowReset] = useState<boolean>(() => new URLSearchParams(window.location.search).has('token'));
   const [theme, setTheme] = useState<Theme>(() => {
     const t = getStoredTheme();
     applyTheme(t);
@@ -55,6 +59,12 @@ function App() {
   };
 
   if (!authed) {
+    if (showReset) {
+      return <ResetPassword onBack={() => { setShowReset(false); setShowLogin(true); }} />;
+    }
+    if (showForgot) {
+      return <ForgotPassword onBack={() => { setShowForgot(false); setShowLogin(true); }} />;
+    }
     if (showLogin) {
       return (
         <Login
@@ -67,6 +77,7 @@ function App() {
             setShowLogin(false);
           }}
           onBack={() => setShowLogin(false)}
+          onForgotPassword={() => { setShowLogin(false); setShowForgot(true); }}
         />
       );
     }

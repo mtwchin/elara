@@ -5,9 +5,10 @@ import elaraLogo from '../assets/elara.jpg';
 interface Props {
   onAuthed: () => void;
   onBack?: () => void;
+  onForgotPassword?: () => void;
 }
 
-const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
+const Login: React.FC<Props> = ({ onAuthed, onBack, onForgotPassword }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('demo@example.com');
   const [password, setPassword] = useState('demo1234');
@@ -102,6 +103,13 @@ const Login: React.FC<Props> = ({ onAuthed, onBack }) => {
             </>
           )}
         </div>
+        {mode === 'login' && onForgotPassword && (
+          <div style={{ marginTop: '0.75rem', fontSize: '0.9rem', textAlign: 'center' }}>
+            <button onClick={onForgotPassword} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+              Forgot your password?
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
