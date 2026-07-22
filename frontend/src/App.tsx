@@ -10,6 +10,8 @@ import Maintenance from './components/Maintenance';
 import TenantPortal from './components/TenantPortal';
 import Assistant from './components/Assistant';
 import Billing from './components/Billing';
+import Settings from './components/Settings';
+import AcceptInvite from './components/AcceptInvite';
 import Login from './components/Login';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
@@ -19,7 +21,7 @@ import { getStoredTheme, applyTheme } from './theme';
 import type { Theme } from './theme';
 import elaraLogo from './assets/elara.jpg';
 
-type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant' | 'billing';
+type View = 'dashboard' | 'properties' | 'tenants' | 'transactions' | 'financials' | 'tools' | 'calendar' | 'maintenance' | 'tenant-portal' | 'assistant' | 'billing' | 'settings';
 
 function App() {
   const [accountType, setAccountType] = useState<string | null>(getAccountType());
@@ -29,6 +31,7 @@ function App() {
   const [showLogin, setShowLogin] = useState<boolean>(false);
   const [showForgot, setShowForgot] = useState<boolean>(false);
   const [showReset, setShowReset] = useState<boolean>(() => new URLSearchParams(window.location.search).has('token'));
+  const [showAcceptInvite, setShowAcceptInvite] = useState<boolean>(() => new URLSearchParams(window.location.search).has('token') && !getToken());
   const [theme, setTheme] = useState<Theme>(() => {
     const t = getStoredTheme();
     applyTheme(t);
@@ -59,6 +62,9 @@ function App() {
   };
 
   if (!authed) {
+    if (showAcceptInvite) {
+      return <AcceptInvite onBack={() => { setShowAcceptInvite(false); setShowLogin(true); }} />;
+    }
     if (showReset) {
       return <ResetPassword onBack={() => { setShowReset(false); setShowLogin(true); }} />;
     }
@@ -95,6 +101,7 @@ function App() {
     { view: 'calendar', label: 'Calendar' },
     { view: 'assistant', label: 'AI Assistant' },
     { view: 'billing', label: 'Billing' },
+    { view: 'settings', label: 'Settings' },
   ];
 
   const tenantNavItems: { view: View; label: string }[] = [
@@ -174,6 +181,7 @@ function App() {
         {currentView === 'tenant-portal' && <TenantPortal />}
         {currentView === 'assistant' && <Assistant />}
         {currentView === 'billing' && <Billing />}
+        {currentView === 'settings' && <Settings />}
       </main>
     </div>
   );
